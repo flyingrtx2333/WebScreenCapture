@@ -21,12 +21,12 @@ chmod 750 tls
 chmod 700 certbot-data
 
 if [[ "${SKIP_IMAGE_BUILD:-0}" == "1" ]]; then
-  docker image inspect webscreencapture-signal:1.2.0 >/dev/null || {
-    echo "webscreencapture-signal:1.2.0 is not loaded" >&2
+  docker image inspect webscreencapture-signal:2.0.0 >/dev/null || {
+    echo "webscreencapture-signal:2.0.0 is not loaded" >&2
     exit 1
   }
 else
-  docker build -t webscreencapture-signal:1.2.0 "${BASE_DIR}/server"
+  docker build -t webscreencapture-signal:2.0.0 "${BASE_DIR}/server"
 fi
 
 if [[ ! -f .env ]]; then
