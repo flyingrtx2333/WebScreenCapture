@@ -126,8 +126,6 @@ button { color: inherit; }
 .icon-button { display: grid; width: 34px; height: 34px; place-items: center; }
 .icon-button svg { width: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .text-button { color: #aeb4b1; font-size: 12px; }
-.token-button { padding-left: 18px; color: var(--accent); border-left: 1px solid var(--line); }
-.token-button:disabled { cursor: wait; opacity: .4; transform: none; }
 
 .empty-state {
   position: absolute;
@@ -215,36 +213,6 @@ button { color: inherit; }
 .password-row button:disabled { opacity: .45; }
 .form-error { min-height: 20px; margin: 12px 0 0; color: var(--danger); font-size: 12px; }
 
-.token-panel {
-  position: fixed;
-  z-index: 40;
-  inset: 0;
-  display: grid;
-  padding: 24px;
-  place-items: center;
-  background: rgba(3, 4, 5, .76);
-  backdrop-filter: blur(18px);
-}
-.token-panel[hidden] { display: none; }
-.token-dialog {
-  position: relative;
-  width: min(740px, 100%);
-  padding: clamp(30px, 5vw, 52px);
-  background:
-    radial-gradient(circle at 92% 0, rgba(116, 242, 184, .12), transparent 34%),
-    #101315;
-  border: 1px solid rgba(116, 242, 184, .2);
-  box-shadow: 0 28px 90px rgba(0, 0, 0, .52);
-  animation: tokenIn .28s ease both;
-}
-.token-close { position: absolute; top: 18px; right: 20px; width: 34px; height: 34px; color: #aeb4b1; border: 0; background: transparent; font-size: 25px; cursor: pointer; }
-.token-dialog h2 { margin: 0 0 14px; font-size: clamp(34px, 5vw, 54px); font-weight: 580; letter-spacing: -.05em; }
-.token-description { max-width: 560px; margin: 0 0 34px; color: #9ea6a2; font-size: 14px; line-height: 1.7; }
-.token-result-label { display: block; margin-bottom: 9px; color: var(--muted); font-size: 10px; letter-spacing: .14em; }
-.token-output { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; border: 1px solid #3b4541; background: #090b0c; }
-.token-output code { min-width: 0; padding: 17px 18px; color: var(--accent); font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; user-select: all; }
-.token-output button { padding: 0 20px; color: #07110d; border: 0; background: var(--accent); font-size: 12px; font-weight: 700; cursor: pointer; }
-.token-status { min-height: 20px; margin: 10px 0 16px; color: var(--accent); font-size: 12px; }
 
 .agent-page { overflow: hidden; }
 .agent-shell { min-height: 100vh; display: grid; grid-template-rows: 72px 1fr auto; padding: 0 38px 28px; background: radial-gradient(circle at 70% 30%, rgba(116,242,184,.075), transparent 30%), #0a0b0d; }
@@ -274,7 +242,6 @@ button { color: inherit; }
 @keyframes stageIn { from { opacity: 0; transform: translate(-50%, -42%); } }
 @keyframes formIn { from { opacity: 0; transform: translateY(18px); } }
 @keyframes metricsIn { from { opacity: 0; transform: translateY(8px); } }
-@keyframes tokenIn { from { opacity: 0; transform: translateY(12px) scale(.99); } }
 
 @media (max-width: 920px) {
   .login-layer { grid-template-columns: 1fr; }
@@ -291,8 +258,6 @@ button { color: inherit; }
   .viewer-header { padding: 0 16px; }
   .header-actions { gap: 10px; }
   .connection-badge { display: none; }
-  .token-output { grid-template-columns: 1fr; }
-  .token-output button { min-height: 44px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

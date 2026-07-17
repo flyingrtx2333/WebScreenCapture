@@ -13,6 +13,6 @@ dotnet restore .\WebScreenCapture.Client\WebScreenCapture.Client.csproj
 dotnet publish .\WebScreenCapture.Client\WebScreenCapture.Client.csproj -c Release -r win-x64 -o ..\artifacts\win-x64
 ```
 
-The output is a self-contained `WebScreenCapture.exe`. WebView2 Runtime remains a system prerequisite. On first launch, enter the deployed server URL and the access token generated on the viewer page. The same token signs in to the web viewer and is encrypted with DPAPI for the current Windows user.
+The output is a self-contained `WebScreenCapture.exe`. WebView2 Runtime remains a system prerequisite. Enter any non-empty pairing token in the web viewer, then enter exactly the same token in the Windows agent. The token is encrypted with DPAPI for the current Windows user.
 
 After authentication, click **开始捕获** and select a monitor in the Windows picker. The agent then waits for the viewer automatically; there is no command line or background service to configure.

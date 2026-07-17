@@ -11,7 +11,6 @@ deploy/letsencrypt/
 deploy/acme-webroot/
 deploy/certbot-data/
 deploy/tls/
-deploy/data/
 deploy/turnserver.runtime.conf
 *.user
 *.suo

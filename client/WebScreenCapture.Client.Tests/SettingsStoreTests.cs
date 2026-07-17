@@ -16,7 +16,7 @@ public sealed class SettingsStoreTests
             store.Save(expected);
 
             Assert.Equal(expected, store.Load());
-            Assert.DoesNotContain(expected.AccessToken, File.ReadAllText(Path.Combine(directory, "settings.json")));
+            Assert.DoesNotContain(expected.PairingToken, File.ReadAllText(Path.Combine(directory, "settings.json")));
 
             store.Delete();
             Assert.Null(store.Load());

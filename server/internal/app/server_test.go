@@ -2,7 +2,7 @@ package app
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -11,20 +11,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
-func TestHTTPAuthenticationAndAssets(t *testing.T) {
-	const accessToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	cfg := Config{
-		AccessTokenHash:  sha256.Sum256([]byte(accessToken)),
+func testConfig() Config {
+	return Config{
 		SessionSecret:    bytes.Repeat([]byte{7}, 32),
 		TURNSharedSecret: strings.Repeat("a", 32),
 		TURNHost:         "screen.example.com",
 		TURNPort:         3479,
 		TURNSTLSPort:     5349,
-		SecureCookies:    true,
 	}
-	handler, err := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func TestHTTPAcceptsArbitraryPairingToken(t *testing.T) {
+	handler, err := NewServer(testConfig(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,112 +37,128 @@ func TestHTTPAuthenticationAndAssets(t *testing.T) {
 		t.Fatalf("embedded asset unavailable: status=%d", asset.Code)
 	}
 
-	unauthorized := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, "/api/status", nil))
-	if unauthorized.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated status returned %d", unauthorized.Code)
-	}
-	unauthorizedRotate := httptest.NewRecorder()
-	handler.ServeHTTP(unauthorizedRotate, httptest.NewRequest(http.MethodPost, "/api/access-token/rotate", strings.NewReader(`{}`)))
-	if unauthorizedRotate.Code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated token rotation returned %d", unauthorizedRotate.Code)
-	}
-
 	login := httptest.NewRecorder()
-	handler.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"`+accessToken+`"}`)))
+	handler.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"anything-I-choose"}`)))
 	if login.Code != http.StatusOK {
-		t.Fatalf("viewer login returned %d: %s", login.Code, login.Body.String())
+		t.Fatalf("viewer pairing returned %d: %s", login.Code, login.Body.String())
 	}
 	cookies := login.Result().Cookies()
-	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
+	if len(cookies) != 1 || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteStrictMode {
 		t.Fatal("viewer cookie is missing required security attributes")
 	}
 
-	statusRequest := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	statusRequest.AddCookie(cookies[0])
-	status := httptest.NewRecorder()
-	handler.ServeHTTP(status, statusRequest)
-	if status.Code != http.StatusOK {
-		t.Fatalf("authenticated status returned %d", status.Code)
-	}
-
 	agentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
-	agentRequest.Header.Set("Authorization", "Bearer "+accessToken)
+	agentRequest.Header.Set("Authorization", "Bearer anything-I-choose")
 	agent := httptest.NewRecorder()
 	handler.ServeHTTP(agent, agentRequest)
 	if agent.Code != http.StatusOK {
-		t.Fatalf("agent login returned %d: %s", agent.Code, agent.Body.String())
+		t.Fatalf("agent pairing returned %d: %s", agent.Code, agent.Body.String())
+	}
+
+	empty := httptest.NewRecorder()
+	handler.ServeHTTP(empty, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"  "}`)))
+	if empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty pairing token returned %d", empty.Code)
 	}
 }
 
-func TestAccessTokenRotationUsesOneTokenForViewerAndAgent(t *testing.T) {
-	const oldToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	cfg := Config{
-		AccessTokenHash:  sha256.Sum256([]byte(oldToken)),
-		AccessTokenFile:  t.TempDir() + "/access-token.sha256",
-		SessionSecret:    bytes.Repeat([]byte{8}, 32),
-		TURNSharedSecret: strings.Repeat("a", 32),
-		TURNHost:         "screen.example.com",
-		TURNPort:         3479,
-		TURNSTLSPort:     5349,
-	}
+func TestWebSocketRoomsAreIsolatedByPairingToken(t *testing.T) {
+	cfg := testConfig()
 	handler, err := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
+	server := httptest.NewServer(handler)
+	defer server.Close()
 
-	agentLogin := httptest.NewRecorder()
-	agentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
-	agentRequest.Header.Set("Authorization", "Bearer "+oldToken)
-	handler.ServeHTTP(agentLogin, agentRequest)
-	agentCookie := agentLogin.Result().Cookies()[0]
+	viewerCookie := loginForTest(t, server.URL, RoleViewer, "room-a")
+	viewerConn := dialForTest(t, server.URL, viewerCookie)
+	defer viewerConn.CloseNow()
 
-	viewerLogin := httptest.NewRecorder()
-	handler.ServeHTTP(viewerLogin, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"`+oldToken+`"}`)))
-	viewerCookie := viewerLogin.Result().Cookies()[0]
+	agentBCookie := loginForTest(t, server.URL, RoleAgent, "room-b")
+	agentBConn := dialForTest(t, server.URL, agentBCookie)
+	defer agentBConn.CloseNow()
+	assertRoomStatus(t, server.URL, viewerCookie, false, true)
 
-	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/access-token/rotate", strings.NewReader(`{}`))
-	rotateRequest.AddCookie(viewerCookie)
-	rotate := httptest.NewRecorder()
-	handler.ServeHTTP(rotate, rotateRequest)
-	if rotate.Code != http.StatusOK || rotate.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("rotate returned %d: %s", rotate.Code, rotate.Body.String())
+	agentACookie := loginForTest(t, server.URL, RoleAgent, "room-a")
+	agentAConn := dialForTest(t, server.URL, agentACookie)
+	defer agentAConn.CloseNow()
+	assertRoomStatus(t, server.URL, viewerCookie, true, true)
+}
+
+func loginForTest(t *testing.T, baseURL string, role Role, token string) *http.Cookie {
+	t.Helper()
+	var request *http.Request
+	var err error
+	if role == RoleViewer {
+		body, _ := json.Marshal(map[string]string{"token": token})
+		request, err = http.NewRequest(http.MethodPost, baseURL+"/api/viewer/session", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+	} else {
+		request, err = http.NewRequest(http.MethodPost, baseURL+"/api/agent/session", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	var payload struct {
-		Token string `json:"token"`
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := json.NewDecoder(rotate.Body).Decode(&payload); err != nil || len(payload.Token) != 64 {
-		t.Fatalf("invalid rotate response: %q, %v", rotate.Body.String(), err)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK || len(response.Cookies()) != 1 {
+		t.Fatalf("%s login returned %d", role, response.StatusCode)
+	}
+	return response.Cookies()[0]
+}
 
-	oldAgentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
-	oldAgentRequest.Header.Set("Authorization", "Bearer "+oldToken)
-	oldAgent := httptest.NewRecorder()
-	handler.ServeHTTP(oldAgent, oldAgentRequest)
-	if oldAgent.Code != http.StatusUnauthorized {
-		t.Fatalf("old token still authenticated agent: %d", oldAgent.Code)
+func dialForTest(t *testing.T, baseURL string, cookie *http.Cookie) *websocket.Conn {
+	t.Helper()
+	header := http.Header{}
+	header.Set("Cookie", cookie.String())
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(baseURL, "http")+"/ws", &websocket.DialOptions{HTTPHeader: header})
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	newAgentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
-	newAgentRequest.Header.Set("Authorization", "Bearer "+payload.Token)
-	newAgent := httptest.NewRecorder()
-	handler.ServeHTTP(newAgent, newAgentRequest)
-	if newAgent.Code != http.StatusOK {
-		t.Fatalf("new token rejected for agent: %d", newAgent.Code)
+	if _, _, err := conn.Read(ctx); err != nil {
+		conn.CloseNow()
+		t.Fatal(err)
 	}
+	return conn
+}
 
-	newViewer := httptest.NewRecorder()
-	handler.ServeHTTP(newViewer, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"`+payload.Token+`"}`)))
-	if newViewer.Code != http.StatusOK {
-		t.Fatalf("new token rejected for viewer: %d", newViewer.Code)
+func assertRoomStatus(t *testing.T, baseURL string, cookie *http.Cookie, wantAgent, wantViewer bool) {
+	t.Helper()
+	request, _ := http.NewRequest(http.MethodGet, baseURL+"/api/status", nil)
+	request.AddCookie(cookie)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer response.Body.Close()
+	var status struct {
+		AgentOnline  bool `json:"agentOnline"`
+		ViewerActive bool `json:"viewerActive"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.AgentOnline != wantAgent || status.ViewerActive != wantViewer {
+		t.Fatalf("room status=%+v, want agent=%v viewer=%v", status, wantAgent, wantViewer)
+	}
+}
 
-	staleSessionRequest := httptest.NewRequest(http.MethodGet, "/api/status", nil)
-	staleSessionRequest.AddCookie(agentCookie)
-	staleSession := httptest.NewRecorder()
-	handler.ServeHTTP(staleSession, staleSessionRequest)
-	if staleSession.Code != http.StatusUnauthorized {
-		t.Fatalf("agent session survived rotation: %d", staleSession.Code)
+func TestPairingKeyNormalization(t *testing.T) {
+	left, ok := makePairingKey("  same-room  ")
+	if !ok {
+		t.Fatal("valid pairing token was rejected")
+	}
+	right, _ := makePairingKey("same-room")
+	other, _ := makePairingKey("other-room")
+	if left != right || left == other {
+		t.Fatal("pairing token hashing did not isolate rooms")
 	}
 }
 

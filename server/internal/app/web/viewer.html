@@ -20,7 +20,6 @@
       </a>
       <div class="header-actions">
         <span id="connectionBadge" class="connection-badge is-idle"><i></i><span>等待连接</span></span>
-        <button id="tokenButton" class="text-button token-button" type="button">生成 Token</button>
         <button id="fullscreenButton" class="icon-button" type="button" title="全屏观看" aria-label="全屏观看">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
         </button>
@@ -51,32 +50,17 @@
       <div class="wordmark login-wordmark"><img class="wordmark-logo" src="/assets/logo-mark.png" alt=""><span>SCREEN</span></div>
       <p class="eyebrow">PRIVATE VIEW</p>
       <h1>打开你的实时桌面。</h1>
-      <p>一个访问 Token，同时用于网页登录和 Windows 捕获端。</p>
+      <p>输入任意配对 Token，然后让 Windows 捕获端输入同一个 Token。</p>
     </div>
     <form id="loginForm" class="login-form">
       <input type="text" name="username" value="viewer" autocomplete="username" hidden>
-      <label for="tokenInput">访问 Token</label>
+      <label for="tokenInput">配对 Token</label>
       <div class="password-row">
-        <input id="tokenInput" name="token" type="password" autocomplete="current-password" minlength="32" required autofocus>
+        <input id="tokenInput" name="token" type="text" autocomplete="off" maxlength="256" placeholder="例如：my-screen" required autofocus>
         <button id="loginButton" type="submit">进入画面</button>
       </div>
       <p id="loginError" class="form-error" role="alert"></p>
     </form>
-  </section>
-
-  <section id="tokenPanel" class="token-panel" role="dialog" aria-modal="true" aria-labelledby="tokenPanelTitle" hidden>
-    <div class="token-dialog">
-      <button id="tokenCloseButton" class="token-close" type="button" aria-label="关闭">×</button>
-      <p class="eyebrow">ACCESS TOKEN</p>
-      <h2 id="tokenPanelTitle">访问 Token</h2>
-      <p class="token-description">复制到 Windows 捕获端，点击开始捕获即可。网页与 EXE 使用同一个 Token。</p>
-      <span class="token-result-label">当前生成的 Token</span>
-      <div class="token-output">
-        <code id="generatedToken"></code>
-        <button id="copyTokenButton" type="button">复制</button>
-      </div>
-      <p id="copyTokenStatus" class="token-status" role="status"></p>
-    </div>
   </section>
 
   <script src="/assets/viewer.js" defer></script>

@@ -92,10 +92,10 @@
       postHost({ type: 'authenticated' });
     } catch (error) {
       authenticated = false;
-      if (error.message === 'invalid access token') {
+      if (error.message === 'pairing token required') {
         setBadge('验证失败', 'error');
-        setStatus('访问 Token 无效');
-        showError('访问 Token 不正确，请从观看网页生成后重新输入。');
+        setStatus('配对 Token 无效');
+        showError('请输入与观看网页相同的配对 Token。');
         postHost({ type: 'auth-error', message: error.message });
       } else {
         setBadge('信令重连中', 'error');
@@ -129,12 +129,6 @@
     ws.addEventListener('close', event => {
       closePeer();
       authenticated = false;
-      if (event.code === 1008 && event.reason === 'access token rotated') {
-        setBadge('Token 已更新', 'error');
-        setStatus('请重新输入访问 Token');
-        postHost({ type: 'auth-error', message: 'invalid access token' });
-        return;
-      }
       if (event.code === 1008) {
         setBadge('连接已被替换', 'error');
         setStatus('另一捕获端已登录');

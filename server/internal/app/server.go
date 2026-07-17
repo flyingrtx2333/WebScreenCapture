@@ -1,7 +1,9 @@
 package app
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"log/slog"
@@ -21,7 +23,6 @@ type Server struct {
 	cfg      Config
 	logger   *slog.Logger
 	sessions *sessionStore
-	tokens   *accessTokenStore
 	hub      *hub
 	limiter  *loginLimiter
 	assets   http.Handler
@@ -32,15 +33,10 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	tokens, err := newAccessTokenStore(cfg.AccessTokenHash, cfg.AccessTokenFile)
-	if err != nil {
-		return nil, err
-	}
 	s := &Server{
 		cfg:      cfg,
 		logger:   logger,
 		sessions: newSessionStore(cfg.SessionSecret, cfg.SecureCookies),
-		tokens:   tokens,
 		hub:      newHub(),
 		limiter:  newLoginLimiter(5, time.Minute),
 		assets:   http.FileServer(http.FS(webRoot)),
@@ -50,7 +46,6 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("POST /api/agent/session", s.agentSession)
 	mux.HandleFunc("POST /api/viewer/session", s.viewerSession)
-	mux.HandleFunc("POST /api/access-token/rotate", s.rotateAccessToken)
 	mux.HandleFunc("GET /api/session", s.sessionInfo)
 	mux.HandleFunc("DELETE /api/session", s.deleteSession)
 	mux.HandleFunc("GET /api/status", s.status)
@@ -73,12 +68,13 @@ func (s *Server) agentSession(w http.ResponseWriter, r *http.Request) {
 	}
 	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
 	token, ok := strings.CutPrefix(authorization, "Bearer ")
-	if !ok || !s.tokens.verify(token) {
-		writeError(w, http.StatusUnauthorized, "invalid access token")
+	pairingKey, valid := makePairingKey(token)
+	if !ok || !valid {
+		writeError(w, http.StatusBadRequest, "pairing token required")
 		return
 	}
 	s.limiter.reset(clientIP(r))
-	s.sessions.create(w, RoleAgent)
+	s.sessions.create(w, RoleAgent, pairingKey)
 	writeJSON(w, http.StatusOK, map[string]string{"role": string(RoleAgent)})
 }
 
@@ -95,31 +91,14 @@ func (s *Server) viewerSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !s.tokens.verify(input.Token) {
-		writeError(w, http.StatusUnauthorized, "invalid access token")
+	pairingKey, valid := makePairingKey(input.Token)
+	if !valid {
+		writeError(w, http.StatusBadRequest, "pairing token required")
 		return
 	}
 	s.limiter.reset(clientIP(r))
-	s.sessions.create(w, RoleViewer)
+	s.sessions.create(w, RoleViewer, pairingKey)
 	writeJSON(w, http.StatusOK, map[string]string{"role": string(RoleViewer)})
-}
-
-func (s *Server) rotateAccessToken(w http.ResponseWriter, r *http.Request) {
-	sessionID, current, ok := s.sessions.current(r)
-	if !ok || current.Role != RoleViewer {
-		writeError(w, http.StatusUnauthorized, "viewer authentication required")
-		return
-	}
-	token, err := s.tokens.rotate()
-	if err != nil {
-		s.logger.Error("rotate access token", "error", err)
-		writeError(w, http.StatusInternalServerError, "could not persist access token")
-		return
-	}
-	s.sessions.retain(sessionID)
-	s.hub.disconnectAgent("access token rotated")
-	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
@@ -133,36 +112,37 @@ func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.sessions.role(r); !ok {
-		writeError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	agentOnline, viewerActive := s.hub.status()
-	writeJSON(w, http.StatusOK, map[string]bool{"agentOnline": agentOnline, "viewerActive": viewerActive})
-}
-
-func (s *Server) ice(w http.ResponseWriter, r *http.Request) {
-	role, ok := s.sessions.role(r)
+	_, current, ok := s.sessions.current(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"iceServers": makeICEServers(s.cfg, role, time.Now())})
+	agentOnline, viewerActive := s.hub.status(current.PairingKey)
+	writeJSON(w, http.StatusOK, map[string]bool{"agentOnline": agentOnline, "viewerActive": viewerActive})
+}
+
+func (s *Server) ice(w http.ResponseWriter, r *http.Request) {
+	_, current, ok := s.sessions.current(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"iceServers": makeICEServers(s.cfg, current.Role, time.Now())})
 }
 
 func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
-	role, ok := s.sessions.role(r)
+	_, current, ok := s.sessions.current(r)
 	if !ok {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
-		s.logger.Warn("websocket rejected", "error", err, "role", role)
+		s.logger.Warn("websocket rejected", "error", err, "role", current.Role)
 		return
 	}
 	conn.SetReadLimit(256 << 10)
-	p := &peer{role: role, conn: conn}
+	p := &peer{role: current.Role, pairingKey: current.PairingKey, conn: conn}
 	s.hub.register(p)
 	defer func() {
 		s.hub.unregister(p)
@@ -250,6 +230,15 @@ func clientIP(r *http.Request) string {
 		host = r.RemoteAddr
 	}
 	return host
+}
+
+func makePairingKey(token string) (string, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" || len(token) > 256 {
+		return "", false
+	}
+	digest := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(digest[:]), true
 }
 
 type loginLimiter struct {

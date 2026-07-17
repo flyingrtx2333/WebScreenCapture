@@ -11,12 +11,12 @@ import (
 func TestSessionRejectsForgedAndExpiredCookies(t *testing.T) {
 	store := newSessionStore(bytes.Repeat([]byte{9}, 32), true)
 	recorder := httptest.NewRecorder()
-	store.create(recorder, RoleViewer)
+	store.create(recorder, RoleViewer, "room-key")
 	cookie := recorder.Result().Cookies()[0]
 
 	validRequest := httptest.NewRequest(http.MethodGet, "/", nil)
 	validRequest.AddCookie(cookie)
-	if role, ok := store.role(validRequest); !ok || role != RoleViewer {
+	if _, current, ok := store.current(validRequest); !ok || current.Role != RoleViewer || current.PairingKey != "room-key" {
 		t.Fatal("valid session was rejected")
 	}
 

@@ -23,9 +23,7 @@ chmod +x deploy.sh issue-certificate.sh renew-certificate.sh
 ./deploy.sh
 ```
 
-The first run prints a bootstrap access token. It signs in to both the web viewer and the Windows capture agent. After signing in, use **生成 Token** in the viewer header whenever you need a new token; copy it into the Windows agent and start capturing immediately.
-
-The server stores only the SHA-256 digest in `data/access-token.sha256`. The `data/` directory is mounted into the otherwise read-only signal container so token rotations survive restarts. To reset back to the bootstrap value from `.env`, stop the signal container and remove only `data/access-token.sha256` before starting it again.
+No access token is generated during deployment. A viewer enters any non-empty token and waits; the Windows agent enters the same token and is paired into that isolated in-memory room. Pairing tokens are not pre-registered or persisted by the server.
 
 Before DNS is available, `deploy.sh` creates a seven-day self-signed bootstrap certificate so nginx and coturn can start. Once DNS resolves, replace it with a trusted certificate:
 

@@ -23,12 +23,6 @@
     loginError: document.getElementById('loginError'),
     fullscreen: document.getElementById('fullscreenButton'),
     logout: document.getElementById('logoutButton'),
-    tokenButton: document.getElementById('tokenButton'),
-    tokenPanel: document.getElementById('tokenPanel'),
-    generatedToken: document.getElementById('generatedToken'),
-    copyToken: document.getElementById('copyTokenButton'),
-    copyTokenStatus: document.getElementById('copyTokenStatus'),
-    tokenClose: document.getElementById('tokenCloseButton'),
   };
 
   let ws = null;
@@ -256,11 +250,11 @@
     el.loginError.textContent = '';
     el.loginButton.disabled = true;
     try {
-      await authenticate(el.tokenInput.value);
+      await authenticate(el.tokenInput.value.trim());
       el.tokenInput.value = '';
       await bootViewer();
     } catch (error) {
-      el.loginError.textContent = error.message === 'invalid access token' ? '访问 Token 不正确。' : error.message;
+      el.loginError.textContent = error.message === 'pairing token required' ? '请输入配对 Token。' : error.message;
     } finally {
       el.loginButton.disabled = false;
     }
@@ -271,48 +265,11 @@
     else document.exitFullscreen?.();
   });
 
-  el.tokenButton.addEventListener('click', async () => {
-    el.tokenButton.disabled = true;
-    try {
-      const result = await request('/api/access-token/rotate', { method: 'POST', body: '{}' });
-      el.generatedToken.textContent = result.token;
-      el.copyTokenStatus.textContent = '';
-      el.tokenPanel.hidden = false;
-      el.copyToken.focus();
-    } catch (error) {
-      window.alert(error.message);
-    } finally {
-      el.tokenButton.disabled = false;
-    }
-  });
-
-  el.copyToken.addEventListener('click', async () => {
-    const token = el.generatedToken.textContent;
-    if (!token) return;
-    try {
-      await navigator.clipboard.writeText(token);
-      el.copyTokenStatus.textContent = '已复制到剪贴板';
-    } catch (_) {
-      el.copyTokenStatus.textContent = '复制失败，请手动选择 Token';
-    }
-  });
-
-  function closeTokenPanel() {
-    el.tokenPanel.hidden = true;
-    el.generatedToken.textContent = '';
-    el.copyTokenStatus.textContent = '';
-    el.tokenButton.focus();
-  }
-
-  el.tokenClose.addEventListener('click', closeTokenPanel);
-
   el.logout.addEventListener('click', async () => {
     intentionalClose = true;
     closePeer();
     if (ws) ws.close(1000, 'logout');
     try { await request('/api/session', { method: 'DELETE' }); } catch (_) {}
-    el.tokenPanel.hidden = true;
-    el.generatedToken.textContent = '';
     el.loginLayer.classList.remove('is-hidden');
     setEmpty('等待被捕获端上线', '登录后查看实时桌面。');
     el.tokenInput.focus();

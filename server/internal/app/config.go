@@ -1,7 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -16,8 +15,6 @@ type Config struct {
 	Address          string
 	PublicURL        string
 	PublicHost       string
-	AccessTokenHash  [sha256.Size]byte
-	AccessTokenFile  string
 	SessionSecret    []byte
 	TURNSharedSecret string
 	TURNHost         string
@@ -31,15 +28,6 @@ func LoadConfigFromEnv() (Config, error) {
 	parsedURL, err := url.Parse(publicURL)
 	if err != nil || parsedURL.Hostname() == "" {
 		return Config{}, fmt.Errorf("PUBLIC_URL must be an absolute URL")
-	}
-
-	accessHashHex := strings.TrimSpace(os.Getenv("ACCESS_TOKEN_SHA256"))
-	if accessHashHex == "" {
-		accessHashHex = strings.TrimSpace(os.Getenv("DEVICE_TOKEN_SHA256"))
-	}
-	accessHash, err := decodeAccessTokenHash(accessHashHex)
-	if err != nil {
-		return Config{}, errors.New("ACCESS_TOKEN_SHA256 must be a 64-character SHA-256 hex digest")
 	}
 
 	sessionSecret, err := decodeSecret(os.Getenv("SESSION_SECRET"))
@@ -70,8 +58,6 @@ func LoadConfigFromEnv() (Config, error) {
 		Address:          envOr("APP_ADDR", ":8080"),
 		PublicURL:        strings.TrimRight(publicURL, "/"),
 		PublicHost:       parsedURL.Host,
-		AccessTokenHash:  accessHash,
-		AccessTokenFile:  strings.TrimSpace(os.Getenv("ACCESS_TOKEN_FILE")),
 		SessionSecret:    sessionSecret,
 		TURNSharedSecret: turnSecret,
 		TURNHost:         turnHost,

@@ -19,9 +19,10 @@ type signalMessage struct {
 }
 
 type peer struct {
-	role Role
-	conn *websocket.Conn
-	mu   sync.Mutex
+	role       Role
+	pairingKey string
+	conn       *websocket.Conn
+	mu         sync.Mutex
 }
 
 func (p *peer) send(message signalMessage) error {
@@ -38,14 +39,18 @@ func (p *peer) close(code websocket.StatusCode, reason string) {
 	_ = p.conn.Close(code, reason)
 }
 
-type hub struct {
-	mu             sync.Mutex
+type signalRoom struct {
 	agent          *peer
 	viewer         *peer
 	currentSession string
 }
 
-func newHub() *hub { return &hub{} }
+type hub struct {
+	mu    sync.Mutex
+	rooms map[string]*signalRoom
+}
+
+func newHub() *hub { return &hub{rooms: make(map[string]*signalRoom)} }
 
 func (h *hub) register(p *peer) {
 	var replaced *peer
@@ -53,22 +58,27 @@ func (h *hub) register(p *peer) {
 	var sessionID string
 
 	h.mu.Lock()
+	room := h.rooms[p.pairingKey]
+	if room == nil {
+		room = &signalRoom{}
+		h.rooms[p.pairingKey] = room
+	}
 	if p.role == RoleAgent {
-		replaced = h.agent
-		h.agent = p
-		counterpart = h.viewer
-		sessionID = h.currentSession
+		replaced = room.agent
+		room.agent = p
+		counterpart = room.viewer
+		sessionID = room.currentSession
 	} else {
-		replaced = h.viewer
-		h.viewer = p
-		h.currentSession = randomID(18)
-		sessionID = h.currentSession
-		counterpart = h.agent
+		replaced = room.viewer
+		room.viewer = p
+		room.currentSession = randomID(18)
+		sessionID = room.currentSession
+		counterpart = room.agent
 	}
 	h.mu.Unlock()
 
 	if replaced != nil && replaced != p {
-		replaced.close(websocket.StatusPolicyViolation, "replaced by a newer authenticated connection")
+		replaced.close(websocket.StatusPolicyViolation, "replaced by a newer connection in the same room")
 	}
 	rolePayload, _ := json.Marshal(map[string]string{"role": string(p.role)})
 	_ = p.send(signalMessage{Type: "hello", SessionID: sessionID, Payload: rolePayload})
@@ -82,15 +92,21 @@ func (h *hub) unregister(p *peer) {
 	var sessionID string
 
 	h.mu.Lock()
-	if p.role == RoleAgent && h.agent == p {
-		h.agent = nil
-		counterpart = h.viewer
-		sessionID = h.currentSession
-	} else if p.role == RoleViewer && h.viewer == p {
-		h.viewer = nil
-		counterpart = h.agent
-		sessionID = h.currentSession
-		h.currentSession = ""
+	room := h.rooms[p.pairingKey]
+	if room != nil {
+		if p.role == RoleAgent && room.agent == p {
+			room.agent = nil
+			counterpart = room.viewer
+			sessionID = room.currentSession
+		} else if p.role == RoleViewer && room.viewer == p {
+			room.viewer = nil
+			counterpart = room.agent
+			sessionID = room.currentSession
+			room.currentSession = ""
+		}
+		if room.agent == nil && room.viewer == nil {
+			delete(h.rooms, p.pairingKey)
+		}
 	}
 	h.mu.Unlock()
 
@@ -106,12 +122,16 @@ func (h *hub) route(from *peer, message signalMessage) error {
 	}
 
 	h.mu.Lock()
-	sessionID := h.currentSession
+	room := h.rooms[from.pairingKey]
 	var target *peer
-	if from.role == RoleAgent && h.agent == from {
-		target = h.viewer
-	} else if from.role == RoleViewer && h.viewer == from {
-		target = h.agent
+	var sessionID string
+	if room != nil {
+		sessionID = room.currentSession
+		if from.role == RoleAgent && room.agent == from {
+			target = room.viewer
+		} else if from.role == RoleViewer && room.viewer == from {
+			target = room.agent
+		}
 	}
 	h.mu.Unlock()
 
@@ -124,30 +144,11 @@ func (h *hub) route(from *peer, message signalMessage) error {
 	return target.send(message)
 }
 
-func (h *hub) status() (agentOnline, viewerActive bool) {
+func (h *hub) status(pairingKey string) (agentOnline, viewerActive bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.agent != nil, h.viewer != nil
-}
-
-func (h *hub) disconnectAgent(reason string) {
-	var agent *peer
-	var viewer *peer
-	var sessionID string
-	h.mu.Lock()
-	agent = h.agent
-	viewer = h.viewer
-	sessionID = h.currentSession
-	h.agent = nil
-	h.mu.Unlock()
-
-	if agent != nil && viewer != nil && sessionID != "" {
-		payload, _ := json.Marshal(map[string]string{"reason": reason})
-		_ = viewer.send(signalMessage{Type: "peer.stop", SessionID: sessionID, Payload: payload})
-	}
-	if agent != nil {
-		agent.close(websocket.StatusPolicyViolation, reason)
-	}
+	room := h.rooms[pairingKey]
+	return room != nil && room.agent != nil, room != nil && room.viewer != nil
 }
 
 func allowedSignal(role Role, messageType string) bool {

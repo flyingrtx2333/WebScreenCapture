@@ -20,8 +20,9 @@ const (
 )
 
 type session struct {
-	Role      Role
-	ExpiresAt time.Time
+	Role       Role
+	PairingKey string
+	ExpiresAt  time.Time
 }
 
 type sessionStore struct {
@@ -36,7 +37,7 @@ func newSessionStore(secret []byte, secure bool) *sessionStore {
 	return &sessionStore{sessions: make(map[string]session), secret: secret, secure: secure, ttl: 12 * time.Hour}
 }
 
-func (s *sessionStore) create(w http.ResponseWriter, role Role) {
+func (s *sessionStore) create(w http.ResponseWriter, role Role, pairingKey string) {
 	idBytes := make([]byte, 32)
 	_, _ = rand.Read(idBytes)
 	id := base64.RawURLEncoding.EncodeToString(idBytes)
@@ -44,11 +45,11 @@ func (s *sessionStore) create(w http.ResponseWriter, role Role) {
 
 	s.mu.Lock()
 	for existingID, existing := range s.sessions {
-		if existing.Role == role || time.Now().After(existing.ExpiresAt) {
+		if (existing.Role == role && existing.PairingKey == pairingKey) || time.Now().After(existing.ExpiresAt) {
 			delete(s.sessions, existingID)
 		}
 	}
-	s.sessions[id] = session{Role: role, ExpiresAt: expires}
+	s.sessions[id] = session{Role: role, PairingKey: pairingKey, ExpiresAt: expires}
 	s.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
@@ -106,16 +107,6 @@ func (s *sessionStore) current(r *http.Request) (string, session, bool) {
 		return "", session{}, false
 	}
 	return id, current, true
-}
-
-func (s *sessionStore) retain(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for existingID := range s.sessions {
-		if existingID != id {
-			delete(s.sessions, existingID)
-		}
-	}
 }
 
 func (s *sessionStore) sign(id string) string {

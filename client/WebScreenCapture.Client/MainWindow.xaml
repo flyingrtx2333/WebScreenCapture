@@ -43,9 +43,9 @@
         <TextBlock Text="服务器地址" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,0,0,7" />
         <TextBox x:Name="ServerUrlInput" Text="https://screen.flyingrtx.com" Margin="0,0,0,24" />
 
-        <TextBlock Text="访问 Token" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,0,0,7" />
-        <PasswordBox x:Name="AccessTokenInput" Margin="0,0,0,10" />
-        <TextBlock Text="与网页使用同一个 Token，并通过 Windows DPAPI 加密保存。" Foreground="#68706C" FontSize="11" Margin="0,0,0,30" />
+        <TextBlock Text="配对 Token" Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,0,0,7" />
+        <TextBox x:Name="PairingTokenInput" MaxLength="256" Margin="0,0,0,10" />
+        <TextBlock Text="网页和 EXE 输入相同 Token 即可配对，并通过 Windows DPAPI 加密保存。" Foreground="#68706C" FontSize="11" Margin="0,0,0,30" />
 
         <Button x:Name="SaveButton" Content="连接捕获服务" Height="50" Background="{StaticResource AccentBrush}" Foreground="#07110D" BorderThickness="0" FontSize="13" FontWeight="Bold" Cursor="Hand" Click="SaveButton_Click" />
         <TextBlock x:Name="SetupError" Foreground="#FF776F" FontSize="12" TextWrapping="Wrap" MinHeight="20" Margin="0,12,0,0" />

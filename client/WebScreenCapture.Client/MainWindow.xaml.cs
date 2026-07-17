@@ -34,7 +34,7 @@ public partial class MainWindow : Window
             if (_settings is not null)
             {
                 ServerUrlInput.Text = _settings.ServerUrl;
-                AccessTokenInput.Password = _settings.AccessToken;
+                PairingTokenInput.Text = _settings.PairingToken;
                 await ShowAgentAsync();
             }
         }
@@ -53,10 +53,10 @@ public partial class MainWindow : Window
         try
         {
             var serverUrl = ServerAddress.Normalize(ServerUrlInput.Text);
-            var token = AccessTokenInput.Password.Trim();
-            if (token.Length < 32)
+            var token = PairingTokenInput.Text.Trim();
+            if (token.Length == 0)
             {
-                throw new InvalidOperationException("访问 Token 长度不正确。请输入网页生成的完整 Token。");
+                throw new InvalidOperationException("请输入与网页相同的配对 Token。");
             }
 
             _settings = new AgentSettings(serverUrl, token);
@@ -145,7 +145,7 @@ public partial class MainWindow : Window
             {
                 Dispatcher.Invoke(() =>
                 {
-                    SetupError.Text = "访问 Token 验证失败，请在网页生成新 Token 后重新输入。";
+                    SetupError.Text = "配对 Token 无效，请输入与网页相同的 Token。";
                     ShowSetup();
                 });
             }
@@ -159,7 +159,7 @@ public partial class MainWindow : Window
     private void PostBootstrap()
     {
         if (_settings is null || AgentWebView.CoreWebView2 is null) return;
-        var payload = JsonSerializer.Serialize(new { type = "bootstrap", token = _settings.AccessToken });
+        var payload = JsonSerializer.Serialize(new { type = "bootstrap", token = _settings.PairingToken });
         AgentWebView.CoreWebView2.PostWebMessageAsJson(payload);
     }
 
@@ -170,7 +170,7 @@ public partial class MainWindow : Window
         Activate();
         Show();
         WindowState = WindowState.Normal;
-        AccessTokenInput.Focus();
+        PairingTokenInput.Focus();
     }
 
     private void ResetConnectionSettings()
@@ -182,7 +182,7 @@ public partial class MainWindow : Window
         _settingsStore.Delete();
         _settings = null;
         if (_webViewInitialized) AgentWebView.Source = new Uri("about:blank");
-        AccessTokenInput.Password = string.Empty;
+        PairingTokenInput.Text = string.Empty;
         SetupError.Text = string.Empty;
         ShowSetup();
     }
