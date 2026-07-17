@@ -1,0 +1,16 @@
+artifacts/
+.playwright-cli/
+output/
+tmp/
+client/**/bin/
+client/**/obj/
+server/bin/
+.env
+deploy/.env
+deploy/letsencrypt/
+deploy/acme-webroot/
+deploy/certbot-data/
+deploy/tls/
+deploy/turnserver.runtime.conf
+*.user
+*.suo

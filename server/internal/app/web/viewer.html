@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Screen / 实时桌面</title>
+  <link rel="icon" href="/assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="viewer-page">
+  <main id="workspace" class="viewer-workspace" aria-live="polite">
+    <video id="remoteVideo" class="remote-video" autoplay playsinline muted></video>
+    <div class="screen-grain" aria-hidden="true"></div>
+
+    <header class="viewer-header">
+      <a class="wordmark" href="/" aria-label="Screen 首页">
+        <img class="wordmark-logo" src="/assets/logo-mark.png" alt="">
+        <span>SCREEN</span>
+      </a>
+      <div class="header-actions">
+        <span id="connectionBadge" class="connection-badge is-idle"><i></i><span>等待连接</span></span>
+        <button id="fullscreenButton" class="icon-button" type="button" title="全屏观看" aria-label="全屏观看">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>
+        </button>
+        <button id="logoutButton" class="text-button" type="button">退出</button>
+      </div>
+    </header>
+
+    <section id="emptyState" class="empty-state">
+      <div class="signal-field" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p class="eyebrow">LIVE DESKTOP</p>
+      <h1 id="emptyTitle">等待被捕获端上线</h1>
+      <p id="emptyMessage">捕获端开始共享后，画面会自动出现。</p>
+    </section>
+
+    <footer id="metricsBand" class="metrics-band" hidden>
+      <dl><dt>画面</dt><dd id="resolutionMetric">—</dd></dl>
+      <dl><dt>帧率</dt><dd id="fpsMetric">—</dd></dl>
+      <dl><dt>接收码率</dt><dd id="bitrateMetric">—</dd></dl>
+      <dl><dt>往返延迟</dt><dd id="rttMetric">—</dd></dl>
+      <dl><dt>丢包</dt><dd id="lossMetric">—</dd></dl>
+      <dl><dt>链路</dt><dd id="routeMetric">—</dd></dl>
+      <dl><dt>编码</dt><dd id="codecMetric">—</dd></dl>
+    </footer>
+  </main>
+
+  <section id="loginLayer" class="login-layer">
+    <div class="login-copy">
+      <div class="wordmark login-wordmark"><img class="wordmark-logo" src="/assets/logo-mark.png" alt=""><span>SCREEN</span></div>
+      <p class="eyebrow">PRIVATE VIEW</p>
+      <h1>打开你的实时桌面。</h1>
+      <p>端到端加密传输。服务器只负责连接，不保存画面。</p>
+    </div>
+    <form id="loginForm" class="login-form">
+      <input type="text" name="username" value="viewer" autocomplete="username" hidden>
+      <label for="passwordInput">观看密码</label>
+      <div class="password-row">
+        <input id="passwordInput" name="password" type="password" autocomplete="current-password" minlength="12" required autofocus>
+        <button id="loginButton" type="submit">进入画面</button>
+      </div>
+      <p id="loginError" class="form-error" role="alert"></p>
+    </form>
+  </section>
+
+  <script src="/assets/viewer.js" defer></script>
+</body>
+</html>

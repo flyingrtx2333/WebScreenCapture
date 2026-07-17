@@ -1,0 +1,9 @@
+[Unit]
+Description=Renew WebScreenCapture TLS certificate
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/webscreencapture/deploy/renew-certificate.sh
+

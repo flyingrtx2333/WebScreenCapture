@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Screen Capture Agent</title>
+  <link rel="icon" href="/assets/favicon.png" type="image/png">
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body class="agent-page">
+  <main class="agent-shell">
+    <header class="agent-header">
+      <div class="wordmark"><img class="wordmark-logo" src="/assets/logo-mark.png" alt=""><span>SCREEN</span></div>
+      <span id="agentConnectionBadge" class="connection-badge is-idle"><i></i><span>正在验证</span></span>
+    </header>
+
+    <section class="capture-stage">
+      <div class="capture-intro">
+        <p class="eyebrow">CAPTURE AGENT</p>
+        <h1 id="agentTitle">选择要共享的屏幕</h1>
+        <p id="agentDescription">只传输你在系统窗口中明确选择的画面。</p>
+      </div>
+      <div class="capture-control">
+        <button id="startButton" class="primary-action" type="button" disabled>
+          <span class="action-dot"></span>
+          <span>开始捕获</span>
+        </button>
+        <button id="stopButton" class="secondary-action" type="button" hidden>停止捕获</button>
+      </div>
+      <div class="capture-line" aria-hidden="true"><span id="captureProgress"></span></div>
+    </section>
+
+    <section class="agent-status" aria-label="捕获状态">
+      <div class="status-primary">
+        <span class="status-label">当前状态</span>
+        <strong id="captureStatus">等待验证</strong>
+      </div>
+      <div class="agent-metrics">
+        <dl><dt>质量档位</dt><dd id="profileMetric">—</dd></dl>
+        <dl><dt>输出</dt><dd id="agentResolutionMetric">—</dd></dl>
+        <dl><dt>发送码率</dt><dd id="agentBitrateMetric">—</dd></dl>
+        <dl><dt>往返延迟</dt><dd id="agentRttMetric">—</dd></dl>
+        <dl><dt>链路</dt><dd id="agentRouteMetric">—</dd></dl>
+        <dl><dt>编码</dt><dd id="agentCodecMetric">—</dd></dl>
+      </div>
+    </section>
+  </main>
+
+  <div id="agentError" class="agent-error" role="alert" hidden></div>
+    <script src="/assets/adaptive.js" defer></script>
+    <script src="/assets/agent.js" defer></script>
+</body>
+</html>
