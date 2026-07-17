@@ -130,8 +130,8 @@
         break;
       case 'ice.candidate':
         if (message.sessionId !== sessionId || !message.payload) return;
-        if (pc && pc.remoteDescription) await pc.addIceCandidate(message.payload);
-        else pendingCandidates.push(message.payload);
+        if (pc && pc.remoteDescription) await addRemoteCandidate(message.payload);
+        else pendingCandidates.push(normalizeIceCandidate(message.payload));
         break;
       case 'peer.stop':
         if (message.sessionId !== sessionId) return;
@@ -169,7 +169,7 @@
       if (pc.connectionState === 'disconnected') setBadge('链路波动', 'error');
     });
     await pc.setRemoteDescription(offer);
-    for (const candidate of pendingCandidates.splice(0)) await pc.addIceCandidate(candidate);
+    for (const candidate of pendingCandidates.splice(0)) await addRemoteCandidate(candidate);
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     sendSignal('sdp.answer', pc.localDescription.toJSON());
@@ -178,6 +178,24 @@
   function sendSignal(type, payload) {
     if (!ws || ws.readyState !== WebSocket.OPEN || !sessionId) return;
     ws.send(JSON.stringify({ type, sessionId, payload }));
+  }
+
+  function normalizeIceCandidate(payload) {
+    if (!payload || typeof payload.candidate !== 'string') return payload;
+    let candidate = payload.candidate.trim();
+    if (candidate.toLowerCase().startsWith('a=')) candidate = candidate.slice(2);
+    if (candidate && !candidate.toLowerCase().startsWith('candidate:')) candidate = `candidate:${candidate}`;
+    return { ...payload, candidate };
+  }
+
+  async function addRemoteCandidate(payload) {
+    const candidate = normalizeIceCandidate(payload);
+    if (!candidate?.candidate || !pc) return;
+    try {
+      await pc.addIceCandidate(candidate);
+    } catch (error) {
+      console.warn('Ignored invalid remote ICE candidate', candidate.candidate, error);
+    }
   }
 
   function closePeer() {

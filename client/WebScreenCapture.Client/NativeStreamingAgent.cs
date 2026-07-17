@@ -283,7 +283,7 @@ public sealed class NativeStreamingAgent : IAsyncDisposable
                 if (string.IsNullOrWhiteSpace(candidate.candidate)) return;
                 _ = SendSignalAsync("ice.candidate", new
                 {
-                    candidate = candidate.candidate,
+                    candidate = NormalizeIceCandidateForBrowser(candidate.candidate),
                     sdpMid = candidate.sdpMid,
                     sdpMLineIndex = candidate.sdpMLineIndex,
                     usernameFragment = candidate.usernameFragment,
@@ -456,6 +456,15 @@ public sealed class NativeStreamingAgent : IAsyncDisposable
             }
         }
         return result;
+    }
+
+    internal static string NormalizeIceCandidateForBrowser(string candidate)
+    {
+        candidate = candidate.Trim();
+        if (candidate.StartsWith("a=", StringComparison.OrdinalIgnoreCase)) candidate = candidate[2..];
+        return candidate.StartsWith("candidate:", StringComparison.OrdinalIgnoreCase)
+            ? candidate
+            : "candidate:" + candidate;
     }
 
     private static async Task<string> ReadApiErrorAsync(HttpResponseMessage response, CancellationToken cancellationToken)
