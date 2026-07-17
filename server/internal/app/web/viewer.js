@@ -21,6 +21,7 @@
     loginButton: document.getElementById('loginButton'),
     tokenInput: document.getElementById('tokenInput'),
     loginError: document.getElementById('loginError'),
+    copyToken: document.getElementById('copyTokenButton'),
     fullscreen: document.getElementById('fullscreenButton'),
     logout: document.getElementById('logoutButton'),
   };
@@ -34,6 +35,12 @@
   let lastInbound = null;
   let reconnectAttempt = 0;
   let intentionalClose = false;
+  let currentToken = sessionStorage.getItem('pairingToken') || '';
+
+  function updateCopyTokenButton() {
+    el.copyToken.hidden = !currentToken;
+    el.copyToken.textContent = '复制 Token';
+  }
 
   function setBadge(label, state = 'idle') {
     el.badge.className = `connection-badge is-${state}`;
@@ -250,13 +257,29 @@
     el.loginError.textContent = '';
     el.loginButton.disabled = true;
     try {
-      await authenticate(el.tokenInput.value.trim());
+      const token = el.tokenInput.value.trim();
+      await authenticate(token);
+      currentToken = token;
+      sessionStorage.setItem('pairingToken', token);
+      updateCopyTokenButton();
       el.tokenInput.value = '';
       await bootViewer();
     } catch (error) {
       el.loginError.textContent = error.message === 'pairing token required' ? '请输入配对 Token。' : error.message;
     } finally {
       el.loginButton.disabled = false;
+    }
+  });
+
+  el.copyToken.addEventListener('click', async () => {
+    if (!currentToken) return;
+    try {
+      await navigator.clipboard.writeText(currentToken);
+      el.copyToken.textContent = '已复制';
+      window.setTimeout(updateCopyTokenButton, 1600);
+    } catch (_) {
+      el.copyToken.textContent = '复制失败';
+      window.setTimeout(updateCopyTokenButton, 1600);
     }
   });
 
@@ -270,11 +293,16 @@
     closePeer();
     if (ws) ws.close(1000, 'logout');
     try { await request('/api/session', { method: 'DELETE' }); } catch (_) {}
+    currentToken = '';
+    sessionStorage.removeItem('pairingToken');
+    updateCopyTokenButton();
+    setBadge('等待连接', 'idle');
     el.loginLayer.classList.remove('is-hidden');
     setEmpty('等待被捕获端上线', '登录后查看实时桌面。');
     el.tokenInput.focus();
   });
 
+  updateCopyTokenButton();
   request('/api/session')
     .then(session => session.authenticated ? bootViewer() : el.tokenInput.focus())
     .catch(() => el.tokenInput.focus());

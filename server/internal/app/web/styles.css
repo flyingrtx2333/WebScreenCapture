@@ -126,6 +126,14 @@ button { color: inherit; }
 .icon-button { display: grid; width: 34px; height: 34px; place-items: center; }
 .icon-button svg { width: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; }
 .text-button { color: #aeb4b1; font-size: 12px; }
+.token-copy-button {
+  color: var(--accent);
+  padding: 7px 11px;
+  border: 1px solid rgba(116, 242, 184, .28);
+  border-radius: 999px;
+  background: rgba(116, 242, 184, .06);
+}
+.token-copy-button:hover { border-color: rgba(116, 242, 184, .56); }
 
 .empty-state {
   position: absolute;
