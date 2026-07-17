@@ -21,14 +21,14 @@ chmod 750 tls
 chmod 700 certbot-data
 
 if [[ "${SKIP_IMAGE_BUILD:-0}" == "1" ]]; then
-  docker image inspect webscreencapture-signal:2.0.1 >/dev/null || {
-    echo "webscreencapture-signal:2.0.1 is not loaded" >&2
+  docker image inspect webscreencapture-signal:2.0.2 >/dev/null || {
+    echo "webscreencapture-signal:2.0.2 is not loaded" >&2
     exit 1
   }
 else
   docker build \
     --build-arg "GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}" \
-    -t webscreencapture-signal:2.0.1 \
+    -t webscreencapture-signal:2.0.2 \
     "${BASE_DIR}/server"
 fi
 
