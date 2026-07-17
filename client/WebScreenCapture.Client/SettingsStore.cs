@@ -5,7 +5,7 @@ using System.IO;
 
 namespace WebScreenCapture.Client;
 
-public sealed record AgentSettings(string ServerUrl, string DeviceToken);
+public sealed record AgentSettings(string ServerUrl, string AccessToken);
 
 public sealed class SettingsStore
 {
@@ -31,7 +31,7 @@ public sealed class SettingsStore
 
     public void Save(AgentSettings settings)
     {
-        var plaintext = Encoding.UTF8.GetBytes(settings.DeviceToken);
+        var plaintext = Encoding.UTF8.GetBytes(settings.AccessToken);
         try
         {
             var encrypted = ProtectedData.Protect(plaintext, optionalEntropy: null, DataProtectionScope.CurrentUser);

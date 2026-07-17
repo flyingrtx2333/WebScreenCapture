@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,20 +14,15 @@ import (
 )
 
 func TestHTTPAuthenticationAndAssets(t *testing.T) {
-	const deviceToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-	passwordHash, err := HashPassword("viewer password")
-	if err != nil {
-		t.Fatal(err)
-	}
+	const accessToken = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	cfg := Config{
-		DeviceTokenHash:    sha256.Sum256([]byte(deviceToken)),
-		ViewerPasswordHash: passwordHash,
-		SessionSecret:      bytes.Repeat([]byte{7}, 32),
-		TURNSharedSecret:   strings.Repeat("a", 32),
-		TURNHost:           "screen.example.com",
-		TURNPort:           3479,
-		TURNSTLSPort:       5349,
-		SecureCookies:      true,
+		AccessTokenHash:  sha256.Sum256([]byte(accessToken)),
+		SessionSecret:    bytes.Repeat([]byte{7}, 32),
+		TURNSharedSecret: strings.Repeat("a", 32),
+		TURNHost:         "screen.example.com",
+		TURNPort:         3479,
+		TURNSTLSPort:     5349,
+		SecureCookies:    true,
 	}
 	handler, err := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -44,9 +40,14 @@ func TestHTTPAuthenticationAndAssets(t *testing.T) {
 	if unauthorized.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status returned %d", unauthorized.Code)
 	}
+	unauthorizedRotate := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorizedRotate, httptest.NewRequest(http.MethodPost, "/api/access-token/rotate", strings.NewReader(`{}`)))
+	if unauthorizedRotate.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated token rotation returned %d", unauthorizedRotate.Code)
+	}
 
 	login := httptest.NewRecorder()
-	handler.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"password":"viewer password"}`)))
+	handler.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"`+accessToken+`"}`)))
 	if login.Code != http.StatusOK {
 		t.Fatalf("viewer login returned %d: %s", login.Code, login.Body.String())
 	}
@@ -64,11 +65,82 @@ func TestHTTPAuthenticationAndAssets(t *testing.T) {
 	}
 
 	agentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
-	agentRequest.Header.Set("Authorization", "Bearer "+deviceToken)
+	agentRequest.Header.Set("Authorization", "Bearer "+accessToken)
 	agent := httptest.NewRecorder()
 	handler.ServeHTTP(agent, agentRequest)
 	if agent.Code != http.StatusOK {
 		t.Fatalf("agent login returned %d: %s", agent.Code, agent.Body.String())
+	}
+}
+
+func TestAccessTokenRotationUsesOneTokenForViewerAndAgent(t *testing.T) {
+	const oldToken = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	cfg := Config{
+		AccessTokenHash:  sha256.Sum256([]byte(oldToken)),
+		AccessTokenFile:  t.TempDir() + "/access-token.sha256",
+		SessionSecret:    bytes.Repeat([]byte{8}, 32),
+		TURNSharedSecret: strings.Repeat("a", 32),
+		TURNHost:         "screen.example.com",
+		TURNPort:         3479,
+		TURNSTLSPort:     5349,
+	}
+	handler, err := NewServer(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	agentLogin := httptest.NewRecorder()
+	agentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
+	agentRequest.Header.Set("Authorization", "Bearer "+oldToken)
+	handler.ServeHTTP(agentLogin, agentRequest)
+	agentCookie := agentLogin.Result().Cookies()[0]
+
+	viewerLogin := httptest.NewRecorder()
+	handler.ServeHTTP(viewerLogin, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"`+oldToken+`"}`)))
+	viewerCookie := viewerLogin.Result().Cookies()[0]
+
+	rotateRequest := httptest.NewRequest(http.MethodPost, "/api/access-token/rotate", strings.NewReader(`{}`))
+	rotateRequest.AddCookie(viewerCookie)
+	rotate := httptest.NewRecorder()
+	handler.ServeHTTP(rotate, rotateRequest)
+	if rotate.Code != http.StatusOK || rotate.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("rotate returned %d: %s", rotate.Code, rotate.Body.String())
+	}
+	var payload struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(rotate.Body).Decode(&payload); err != nil || len(payload.Token) != 64 {
+		t.Fatalf("invalid rotate response: %q, %v", rotate.Body.String(), err)
+	}
+
+	oldAgentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
+	oldAgentRequest.Header.Set("Authorization", "Bearer "+oldToken)
+	oldAgent := httptest.NewRecorder()
+	handler.ServeHTTP(oldAgent, oldAgentRequest)
+	if oldAgent.Code != http.StatusUnauthorized {
+		t.Fatalf("old token still authenticated agent: %d", oldAgent.Code)
+	}
+
+	newAgentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
+	newAgentRequest.Header.Set("Authorization", "Bearer "+payload.Token)
+	newAgent := httptest.NewRecorder()
+	handler.ServeHTTP(newAgent, newAgentRequest)
+	if newAgent.Code != http.StatusOK {
+		t.Fatalf("new token rejected for agent: %d", newAgent.Code)
+	}
+
+	newViewer := httptest.NewRecorder()
+	handler.ServeHTTP(newViewer, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"`+payload.Token+`"}`)))
+	if newViewer.Code != http.StatusOK {
+		t.Fatalf("new token rejected for viewer: %d", newViewer.Code)
+	}
+
+	staleSessionRequest := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	staleSessionRequest.AddCookie(agentCookie)
+	staleSession := httptest.NewRecorder()
+	handler.ServeHTTP(staleSession, staleSessionRequest)
+	if staleSession.Code != http.StatusUnauthorized {
+		t.Fatalf("agent session survived rotation: %d", staleSession.Code)
 	}
 }
 

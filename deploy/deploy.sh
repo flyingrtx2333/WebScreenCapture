@@ -15,35 +15,34 @@ for command in docker openssl nginx sha256sum; do
 done
 docker compose version >/dev/null
 
-mkdir -p tls acme-webroot certbot-data
+mkdir -p tls acme-webroot certbot-data data
 chown root:65534 tls
+chown 65532:65532 data
 chmod 750 tls
+chmod 700 data
 chmod 700 certbot-data
 
 if [[ "${SKIP_IMAGE_BUILD:-0}" == "1" ]]; then
-  docker image inspect webscreencapture-signal:1.0.0 >/dev/null || {
-    echo "webscreencapture-signal:1.0.0 is not loaded" >&2
+  docker image inspect webscreencapture-signal:1.1.0 >/dev/null || {
+    echo "webscreencapture-signal:1.1.0 is not loaded" >&2
     exit 1
   }
 else
-  docker build -t webscreencapture-signal:1.0.0 "${BASE_DIR}/server"
+  docker build -t webscreencapture-signal:1.1.0 "${BASE_DIR}/server"
 fi
 
 if [[ ! -f .env ]]; then
-  DEVICE_TOKEN="$(openssl rand -hex 32)"
-  VIEWER_PASSWORD="$(openssl rand -hex 12)"
-  DEVICE_TOKEN_SHA256="$(printf '%s' "${DEVICE_TOKEN}" | sha256sum | awk '{print $1}')"
+  ACCESS_TOKEN="$(openssl rand -hex 32)"
+  ACCESS_TOKEN_SHA256="$(printf '%s' "${ACCESS_TOKEN}" | sha256sum | awk '{print $1}')"
   SESSION_SECRET="$(openssl rand -base64 48 | tr -d '\n')"
   TURN_SHARED_SECRET="$(openssl rand -hex 32)"
-  VIEWER_PASSWORD_HASH="$(printf '%s\n' "${VIEWER_PASSWORD}" | docker run --rm -i --entrypoint /wscctl webscreencapture-signal:1.0.0 hash-password)"
-  VIEWER_PASSWORD_HASH_B64="$(printf '%s' "${VIEWER_PASSWORD_HASH}" | openssl base64 -A)"
 
   {
     printf 'APP_ADDR=:8080\n'
     printf 'PUBLIC_URL=https://screen.flyingrtx.com\n'
     printf 'SECURE_COOKIES=true\n'
-    printf 'DEVICE_TOKEN_SHA256=%s\n' "${DEVICE_TOKEN_SHA256}"
-    printf 'VIEWER_PASSWORD_HASH_B64=%s\n' "${VIEWER_PASSWORD_HASH_B64}"
+    printf 'ACCESS_TOKEN_SHA256=%s\n' "${ACCESS_TOKEN_SHA256}"
+    printf 'ACCESS_TOKEN_FILE=/data/access-token.sha256\n'
     printf 'SESSION_SECRET=%s\n' "${SESSION_SECRET}"
     printf 'TURN_SHARED_SECRET=%s\n' "${TURN_SHARED_SECRET}"
     printf 'TURN_HOST=screen.flyingrtx.com\n'
@@ -52,10 +51,25 @@ if [[ ! -f .env ]]; then
   } > .env
   chmod 600 .env
 
-  echo "INITIAL_CREDENTIALS_BEGIN"
-  echo "DEVICE_TOKEN=${DEVICE_TOKEN}"
-  echo "VIEWER_PASSWORD=${VIEWER_PASSWORD}"
-  echo "INITIAL_CREDENTIALS_END"
+  echo "INITIAL_ACCESS_TOKEN_BEGIN"
+  echo "ACCESS_TOKEN=${ACCESS_TOKEN}"
+  echo "INITIAL_ACCESS_TOKEN_END"
+else
+  if ! grep -q '^ACCESS_TOKEN_SHA256=' .env; then
+    LEGACY_TOKEN_SHA256="$(sed -n 's/^DEVICE_TOKEN_SHA256=//p' .env | head -n 1)"
+    if [[ ! "${LEGACY_TOKEN_SHA256}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+      echo "existing .env has no valid DEVICE_TOKEN_SHA256 to migrate" >&2
+      exit 1
+    fi
+    grep -Ev '^(DEVICE_TOKEN_SHA256|VIEWER_PASSWORD_HASH|VIEWER_PASSWORD_HASH_B64|ACCESS_TOKEN_FILE)=' .env > .env.migrated
+    printf 'ACCESS_TOKEN_SHA256=%s\n' "${LEGACY_TOKEN_SHA256}" >> .env.migrated
+    printf 'ACCESS_TOKEN_FILE=/data/access-token.sha256\n' >> .env.migrated
+    mv .env.migrated .env
+    echo "Migrated the existing device token to the shared access token."
+  elif ! grep -q '^ACCESS_TOKEN_FILE=' .env; then
+    printf 'ACCESS_TOKEN_FILE=/data/access-token.sha256\n' >> .env
+  fi
+  chmod 600 .env
 fi
 
 if [[ ! -s tls/fullchain.pem || ! -s tls/privkey.pem ]]; then

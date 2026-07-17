@@ -130,6 +130,26 @@ func (h *hub) status() (agentOnline, viewerActive bool) {
 	return h.agent != nil, h.viewer != nil
 }
 
+func (h *hub) disconnectAgent(reason string) {
+	var agent *peer
+	var viewer *peer
+	var sessionID string
+	h.mu.Lock()
+	agent = h.agent
+	viewer = h.viewer
+	sessionID = h.currentSession
+	h.agent = nil
+	h.mu.Unlock()
+
+	if agent != nil && viewer != nil && sessionID != "" {
+		payload, _ := json.Marshal(map[string]string{"reason": reason})
+		_ = viewer.send(signalMessage{Type: "peer.stop", SessionID: sessionID, Payload: payload})
+	}
+	if agent != nil {
+		agent.close(websocket.StatusPolicyViolation, reason)
+	}
+}
+
 func allowedSignal(role Role, messageType string) bool {
 	if role == RoleAgent {
 		switch messageType {

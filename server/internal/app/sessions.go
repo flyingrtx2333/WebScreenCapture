@@ -84,13 +84,18 @@ func (s *sessionStore) clear(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *sessionStore) role(r *http.Request) (Role, bool) {
+	_, current, ok := s.current(r)
+	return current.Role, ok
+}
+
+func (s *sessionStore) current(r *http.Request) (string, session, bool) {
 	cookie, err := r.Cookie(cookieName)
 	if err != nil {
-		return "", false
+		return "", session{}, false
 	}
 	id, signature, ok := strings.Cut(cookie.Value, ".")
 	if !ok || !hmac.Equal([]byte(signature), []byte(s.sign(id))) {
-		return "", false
+		return "", session{}, false
 	}
 
 	s.mu.Lock()
@@ -98,9 +103,19 @@ func (s *sessionStore) role(r *http.Request) (Role, bool) {
 	current, ok := s.sessions[id]
 	if !ok || time.Now().After(current.ExpiresAt) {
 		delete(s.sessions, id)
-		return "", false
+		return "", session{}, false
 	}
-	return current.Role, true
+	return id, current, true
+}
+
+func (s *sessionStore) retain(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for existingID := range s.sessions {
+		if existingID != id {
+			delete(s.sessions, existingID)
+		}
+	}
 }
 
 func (s *sessionStore) sign(id string) string {

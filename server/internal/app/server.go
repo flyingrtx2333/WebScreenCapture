@@ -1,8 +1,6 @@
 package app
 
 import (
-	"crypto/sha256"
-	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"io/fs"
@@ -23,6 +21,7 @@ type Server struct {
 	cfg      Config
 	logger   *slog.Logger
 	sessions *sessionStore
+	tokens   *accessTokenStore
 	hub      *hub
 	limiter  *loginLimiter
 	assets   http.Handler
@@ -33,10 +32,15 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
+	tokens, err := newAccessTokenStore(cfg.AccessTokenHash, cfg.AccessTokenFile)
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		cfg:      cfg,
 		logger:   logger,
 		sessions: newSessionStore(cfg.SessionSecret, cfg.SecureCookies),
+		tokens:   tokens,
 		hub:      newHub(),
 		limiter:  newLoginLimiter(5, time.Minute),
 		assets:   http.FileServer(http.FS(webRoot)),
@@ -46,6 +50,7 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("POST /api/agent/session", s.agentSession)
 	mux.HandleFunc("POST /api/viewer/session", s.viewerSession)
+	mux.HandleFunc("POST /api/access-token/rotate", s.rotateAccessToken)
 	mux.HandleFunc("GET /api/session", s.sessionInfo)
 	mux.HandleFunc("DELETE /api/session", s.deleteSession)
 	mux.HandleFunc("GET /api/status", s.status)
@@ -68,13 +73,8 @@ func (s *Server) agentSession(w http.ResponseWriter, r *http.Request) {
 	}
 	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
 	token, ok := strings.CutPrefix(authorization, "Bearer ")
-	if !ok || len(token) < 32 {
-		writeError(w, http.StatusUnauthorized, "invalid device token")
-		return
-	}
-	digest := sha256.Sum256([]byte(token))
-	if subtle.ConstantTimeCompare(digest[:], s.cfg.DeviceTokenHash[:]) != 1 {
-		writeError(w, http.StatusUnauthorized, "invalid device token")
+	if !ok || !s.tokens.verify(token) {
+		writeError(w, http.StatusUnauthorized, "invalid access token")
 		return
 	}
 	s.limiter.reset(clientIP(r))
@@ -89,19 +89,37 @@ func (s *Server) viewerSession(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var input struct {
-		Password string `json:"password"`
+		Token string `json:"token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if !VerifyPassword(input.Password, s.cfg.ViewerPasswordHash) {
-		writeError(w, http.StatusUnauthorized, "invalid password")
+	if !s.tokens.verify(input.Token) {
+		writeError(w, http.StatusUnauthorized, "invalid access token")
 		return
 	}
 	s.limiter.reset(clientIP(r))
 	s.sessions.create(w, RoleViewer)
 	writeJSON(w, http.StatusOK, map[string]string{"role": string(RoleViewer)})
+}
+
+func (s *Server) rotateAccessToken(w http.ResponseWriter, r *http.Request) {
+	sessionID, current, ok := s.sessions.current(r)
+	if !ok || current.Role != RoleViewer {
+		writeError(w, http.StatusUnauthorized, "viewer authentication required")
+		return
+	}
+	token, err := s.tokens.rotate()
+	if err != nil {
+		s.logger.Error("rotate access token", "error", err)
+		writeError(w, http.StatusInternalServerError, "could not persist access token")
+		return
+	}
+	s.sessions.retain(sessionID)
+	s.hub.disconnectAgent("access token rotated")
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{"token": token})
 }
 
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {

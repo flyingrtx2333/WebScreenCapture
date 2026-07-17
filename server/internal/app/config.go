@@ -13,17 +13,17 @@ import (
 )
 
 type Config struct {
-	Address            string
-	PublicURL          string
-	PublicHost         string
-	DeviceTokenHash    [sha256.Size]byte
-	ViewerPasswordHash string
-	SessionSecret      []byte
-	TURNSharedSecret   string
-	TURNHost           string
-	TURNPort           int
-	TURNSTLSPort       int
-	SecureCookies      bool
+	Address          string
+	PublicURL        string
+	PublicHost       string
+	AccessTokenHash  [sha256.Size]byte
+	AccessTokenFile  string
+	SessionSecret    []byte
+	TURNSharedSecret string
+	TURNHost         string
+	TURNPort         int
+	TURNSTLSPort     int
+	SecureCookies    bool
 }
 
 func LoadConfigFromEnv() (Config, error) {
@@ -33,24 +33,13 @@ func LoadConfigFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("PUBLIC_URL must be an absolute URL")
 	}
 
-	deviceHashHex := strings.TrimSpace(os.Getenv("DEVICE_TOKEN_SHA256"))
-	decodedHash, err := hex.DecodeString(deviceHashHex)
-	if err != nil || len(decodedHash) != sha256.Size {
-		return Config{}, errors.New("DEVICE_TOKEN_SHA256 must be a 64-character SHA-256 hex digest")
+	accessHashHex := strings.TrimSpace(os.Getenv("ACCESS_TOKEN_SHA256"))
+	if accessHashHex == "" {
+		accessHashHex = strings.TrimSpace(os.Getenv("DEVICE_TOKEN_SHA256"))
 	}
-	var deviceHash [sha256.Size]byte
-	copy(deviceHash[:], decodedHash)
-
-	passwordHash := strings.TrimSpace(os.Getenv("VIEWER_PASSWORD_HASH"))
-	if encoded := strings.TrimSpace(os.Getenv("VIEWER_PASSWORD_HASH_B64")); encoded != "" {
-		decoded, decodeErr := base64.StdEncoding.DecodeString(encoded)
-		if decodeErr != nil {
-			return Config{}, errors.New("VIEWER_PASSWORD_HASH_B64 must be valid standard Base64")
-		}
-		passwordHash = string(decoded)
-	}
-	if !strings.HasPrefix(passwordHash, "$argon2id$") {
-		return Config{}, errors.New("VIEWER_PASSWORD_HASH_B64 must decode to an Argon2id PHC string")
+	accessHash, err := decodeAccessTokenHash(accessHashHex)
+	if err != nil {
+		return Config{}, errors.New("ACCESS_TOKEN_SHA256 must be a 64-character SHA-256 hex digest")
 	}
 
 	sessionSecret, err := decodeSecret(os.Getenv("SESSION_SECRET"))
@@ -78,17 +67,17 @@ func LoadConfigFromEnv() (Config, error) {
 	}
 
 	return Config{
-		Address:            envOr("APP_ADDR", ":8080"),
-		PublicURL:          strings.TrimRight(publicURL, "/"),
-		PublicHost:         parsedURL.Host,
-		DeviceTokenHash:    deviceHash,
-		ViewerPasswordHash: passwordHash,
-		SessionSecret:      sessionSecret,
-		TURNSharedSecret:   turnSecret,
-		TURNHost:           turnHost,
-		TURNPort:           turnPort,
-		TURNSTLSPort:       turnTLSPort,
-		SecureCookies:      secureCookies,
+		Address:          envOr("APP_ADDR", ":8080"),
+		PublicURL:        strings.TrimRight(publicURL, "/"),
+		PublicHost:       parsedURL.Host,
+		AccessTokenHash:  accessHash,
+		AccessTokenFile:  strings.TrimSpace(os.Getenv("ACCESS_TOKEN_FILE")),
+		SessionSecret:    sessionSecret,
+		TURNSharedSecret: turnSecret,
+		TURNHost:         turnHost,
+		TURNPort:         turnPort,
+		TURNSTLSPort:     turnTLSPort,
+		SecureCookies:    secureCookies,
 	}, nil
 }
 

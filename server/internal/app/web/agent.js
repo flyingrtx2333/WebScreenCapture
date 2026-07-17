@@ -33,6 +33,7 @@
   let sessionId = '';
   let pendingCandidates = [];
   let reconnectAttempt = 0;
+  let reauthTimer = null;
   let statsTimer = null;
   let peerRecoveryTimer = null;
   let lastOutbound = null;
@@ -75,22 +76,32 @@
 
   async function bootstrap(token) {
     if (bootstrapping || authenticated) return;
+    if (reauthTimer) window.clearTimeout(reauthTimer);
+    reauthTimer = null;
     bootstrapping = true;
     try {
       await request('/api/agent/session', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
       const config = await request('/api/ice');
       iceServers = config.iceServers;
       authenticated = true;
+      reconnectAttempt = 0;
       el.start.disabled = false;
       setBadge('信令已连接', 'live');
       setStatus('等待选择屏幕');
       connectWebSocket();
       postHost({ type: 'authenticated' });
     } catch (error) {
-      setBadge('验证失败', 'error');
-      setStatus('设备令牌无效');
-      showError(error.message === 'invalid device token' ? '设备令牌不正确，请在捕获端设置中重新输入。' : error.message);
-      postHost({ type: 'auth-error', message: error.message });
+      authenticated = false;
+      if (error.message === 'invalid access token') {
+        setBadge('验证失败', 'error');
+        setStatus('访问 Token 无效');
+        showError('访问 Token 不正确，请从观看网页生成后重新输入。');
+        postHost({ type: 'auth-error', message: error.message });
+      } else {
+        setBadge('信令重连中', 'error');
+        setStatus(videoTrack ? '画面保留，等待重连' : '信令连接中断');
+        scheduleReauthentication();
+      }
     } finally {
       bootstrapping = false;
       token = '';
@@ -117,8 +128,14 @@
 
     ws.addEventListener('close', event => {
       closePeer();
+      authenticated = false;
+      if (event.code === 1008 && event.reason === 'access token rotated') {
+        setBadge('Token 已更新', 'error');
+        setStatus('请重新输入访问 Token');
+        postHost({ type: 'auth-error', message: 'invalid access token' });
+        return;
+      }
       if (event.code === 1008) {
-        authenticated = false;
         setBadge('连接已被替换', 'error');
         setStatus('另一捕获端已登录');
         return;
@@ -127,8 +144,16 @@
       setStatus(videoTrack ? '画面保留，等待重连' : '信令连接中断');
       const delays = [1000, 2000, 5000, 10000, 30000];
       const delay = delays[Math.min(reconnectAttempt++, delays.length - 1)];
-      window.setTimeout(connectWebSocket, delay);
+      scheduleReauthentication(delay);
     });
+  }
+
+  function scheduleReauthentication(delay = 1000) {
+    if (reauthTimer) return;
+    reauthTimer = window.setTimeout(() => {
+      reauthTimer = null;
+      postHost({ type: 'reauthenticate' });
+    }, delay);
   }
 
   async function handleSignal(message) {

@@ -2,7 +2,7 @@ name: webscreencapture
 
 services:
   signal:
-    image: webscreencapture-signal:1.0.0
+    image: webscreencapture-signal:1.1.0
     build:
       context: ../server
       dockerfile: Dockerfile
@@ -11,6 +11,8 @@ services:
       - ./.env
     ports:
       - "127.0.0.1:18091:8080"
+    volumes:
+      - ./data:/data
     mem_limit: 64m
     cpus: 0.50
     pids_limit: 64

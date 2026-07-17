@@ -34,7 +34,7 @@ public partial class MainWindow : Window
             if (_settings is not null)
             {
                 ServerUrlInput.Text = _settings.ServerUrl;
-                DeviceTokenInput.Password = _settings.DeviceToken;
+                AccessTokenInput.Password = _settings.AccessToken;
                 await ShowAgentAsync();
             }
         }
@@ -53,10 +53,10 @@ public partial class MainWindow : Window
         try
         {
             var serverUrl = ServerAddress.Normalize(ServerUrlInput.Text);
-            var token = DeviceTokenInput.Password.Trim();
+            var token = AccessTokenInput.Password.Trim();
             if (token.Length < 32)
             {
-                throw new InvalidOperationException("设备令牌长度不正确。请输入部署时生成的完整令牌。");
+                throw new InvalidOperationException("访问 Token 长度不正确。请输入网页生成的完整 Token。");
             }
 
             _settings = new AgentSettings(serverUrl, token);
@@ -137,11 +137,15 @@ public partial class MainWindow : Window
             {
                 PostBootstrap();
             }
+            else if (type == "reauthenticate")
+            {
+                PostBootstrap();
+            }
             else if (type == "auth-error")
             {
                 Dispatcher.Invoke(() =>
                 {
-                    SetupError.Text = "设备令牌验证失败，请重新输入部署时生成的令牌。";
+                    SetupError.Text = "访问 Token 验证失败，请在网页生成新 Token 后重新输入。";
                     ShowSetup();
                 });
             }
@@ -155,7 +159,7 @@ public partial class MainWindow : Window
     private void PostBootstrap()
     {
         if (_settings is null || AgentWebView.CoreWebView2 is null) return;
-        var payload = JsonSerializer.Serialize(new { type = "bootstrap", token = _settings.DeviceToken });
+        var payload = JsonSerializer.Serialize(new { type = "bootstrap", token = _settings.AccessToken });
         AgentWebView.CoreWebView2.PostWebMessageAsJson(payload);
     }
 
@@ -166,7 +170,7 @@ public partial class MainWindow : Window
         Activate();
         Show();
         WindowState = WindowState.Normal;
-        DeviceTokenInput.Focus();
+        AccessTokenInput.Focus();
     }
 
     private void ResetConnectionSettings()
@@ -178,7 +182,7 @@ public partial class MainWindow : Window
         _settingsStore.Delete();
         _settings = null;
         if (_webViewInitialized) AgentWebView.Source = new Uri("about:blank");
-        DeviceTokenInput.Password = string.Empty;
+        AccessTokenInput.Password = string.Empty;
         SetupError.Text = string.Empty;
         ShowSetup();
     }
