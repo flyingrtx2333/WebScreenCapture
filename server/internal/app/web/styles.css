@@ -34,14 +34,6 @@ button { color: inherit; }
   object-fit: contain;
 }
 
-.eyebrow {
-  margin: 0 0 18px;
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: .24em;
-}
-
 .connection-badge {
   display: inline-flex;
   align-items: center;
@@ -202,8 +194,7 @@ button { color: inherit; }
     #101417;
 }
 .login-wordmark { position: absolute; top: 34px; }
-.login-copy h1 { max-width: 720px; margin: 0 0 22px; font-size: clamp(48px, 7vw, 92px); font-weight: 580; line-height: .98; letter-spacing: -.065em; }
-.login-copy > p:last-child { max-width: 480px; margin: 0; color: #9ea6a2; font-size: 15px; line-height: 1.65; }
+.login-copy h1 { max-width: 720px; margin: 0; font-size: clamp(48px, 7vw, 92px); font-weight: 580; line-height: .98; letter-spacing: -.065em; }
 .login-form { align-self: center; padding: 56px; animation: formIn .7s .1s ease both; }
 .login-form label { display: block; margin-bottom: 12px; color: #aab0ad; font-size: 12px; }
 .password-row { display: flex; border-bottom: 1px solid #4a504e; }
