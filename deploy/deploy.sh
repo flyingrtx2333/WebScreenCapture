@@ -26,7 +26,10 @@ if [[ "${SKIP_IMAGE_BUILD:-0}" == "1" ]]; then
     exit 1
   }
 else
-  docker build -t webscreencapture-signal:2.0.0 "${BASE_DIR}/server"
+  docker build \
+    --build-arg "GOPROXY=${GOPROXY:-https://proxy.golang.org,direct}" \
+    -t webscreencapture-signal:2.0.0 \
+    "${BASE_DIR}/server"
 fi
 
 if [[ ! -f .env ]]; then
