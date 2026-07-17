@@ -51,7 +51,6 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/ice", s.ice)
 	mux.HandleFunc("GET /ws", s.websocket)
-	mux.HandleFunc("GET /agent", s.agentPage)
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", s.assets))
 	mux.HandleFunc("GET /", s.viewerPage)
 	return s.securityHeaders(mux), nil
@@ -68,6 +67,16 @@ func (s *Server) agentSession(w http.ResponseWriter, r *http.Request) {
 	}
 	authorization := strings.TrimSpace(r.Header.Get("Authorization"))
 	token, ok := strings.CutPrefix(authorization, "Bearer ")
+	if !ok {
+		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+		var input struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err == nil {
+			token = input.Token
+			ok = true
+		}
+	}
 	pairingKey, valid := makePairingKey(token)
 	if !ok || !valid {
 		writeError(w, http.StatusBadRequest, "pairing token required")
@@ -185,10 +194,6 @@ func (s *Server) viewerPage(w http.ResponseWriter, r *http.Request) {
 	s.serveEmbedded(w, r, "web/viewer.html")
 }
 
-func (s *Server) agentPage(w http.ResponseWriter, r *http.Request) {
-	s.serveEmbedded(w, r, "web/agent.html")
-}
-
 func (s *Server) serveEmbedded(w http.ResponseWriter, r *http.Request, name string) {
 	data, err := webFiles.ReadFile(name)
 	if err != nil {
@@ -203,7 +208,7 @@ func (s *Server) serveEmbedded(w http.ResponseWriter, r *http.Request, name stri
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-		w.Header().Set("Permissions-Policy", "display-capture=(self), fullscreen=(self), microphone=(), geolocation=()")
+		w.Header().Set("Permissions-Policy", "display-capture=(), fullscreen=(self), microphone=(), geolocation=()")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")

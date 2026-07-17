@@ -1,8 +1,4 @@
-using Microsoft.Web.WebView2.Core;
 using System.ComponentModel;
-using System.Diagnostics;
-using System.IO;
-using System.Text.Json;
 using System.Windows;
 
 namespace WebScreenCapture.Client;
@@ -12,8 +8,7 @@ public partial class MainWindow : Window
     private readonly SettingsStore _settingsStore = new();
     private System.Windows.Forms.NotifyIcon? _trayIcon;
     private System.Drawing.Icon? _applicationIcon;
-    private AgentSettings? _settings;
-    private bool _webViewInitialized;
+    private NativeStreamingAgent? _agent;
     private bool _exitRequested;
     private bool _shownTrayHint;
 
@@ -26,183 +21,133 @@ public partial class MainWindow : Window
         InitializeTrayIcon();
     }
 
-    private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
         try
         {
-            _settings = _settingsStore.Load();
-            if (_settings is not null)
-            {
-                ServerUrlInput.Text = _settings.ServerUrl;
-                PairingTokenInput.Text = _settings.PairingToken;
-                await ShowAgentAsync();
-            }
+            var settings = _settingsStore.Load();
+            if (settings is null) return;
+            ServerUrlInput.Text = settings.ServerUrl;
+            PairingTokenInput.Text = settings.PairingToken;
         }
         catch (Exception ex)
         {
             SetupError.Text = $"读取连接设置失败：{ex.Message}";
-            ShowSetup();
         }
     }
 
-    private async void SaveButton_Click(object sender, RoutedEventArgs e)
+    private async void StartButton_Click(object sender, RoutedEventArgs e)
     {
         SetupError.Text = string.Empty;
-        WebView2InstallButton.Visibility = Visibility.Collapsed;
-        SaveButton.IsEnabled = false;
+        StartButton.IsEnabled = false;
         try
         {
             var serverUrl = ServerAddress.Normalize(ServerUrlInput.Text);
             var token = PairingTokenInput.Text.Trim();
-            if (token.Length == 0)
-            {
-                throw new InvalidOperationException("请输入与网页相同的配对 Token。");
-            }
+            if (token.Length == 0) throw new InvalidOperationException("请输入与观看网页相同的配对 Token。");
 
-            _settings = new AgentSettings(serverUrl, token);
-            _settingsStore.Save(_settings);
-            await ShowAgentAsync();
+            var settings = new AgentSettings(serverUrl, token);
+            _settingsStore.Save(settings);
+            var agent = new NativeStreamingAgent(settings);
+            agent.StatusChanged += Agent_StatusChanged;
+            agent.CaptureStatsChanged += Agent_CaptureStatsChanged;
+            _agent = agent;
+            SetInputsEnabled(false);
+            await agent.StartAsync();
+            StartButton.Visibility = Visibility.Collapsed;
+            StopButton.Visibility = Visibility.Visible;
+            var screen = System.Windows.Forms.Screen.PrimaryScreen?.Bounds;
+            ResolutionMetric.Text = screen is null ? "主桌面" : $"{screen.Value.Width}×{screen.Value.Height}";
         }
         catch (Exception ex)
         {
             SetupError.Text = ex.Message;
+            await DisposeAgentAsync();
+            SetInputsEnabled(true);
+            RuntimeState.Text = "启动失败";
+            RuntimeDetail.Text = "请检查 NVIDIA 驱动、网络和发布文件是否完整。";
         }
         finally
         {
-            SaveButton.IsEnabled = true;
+            StartButton.IsEnabled = true;
         }
     }
 
-    private async Task ShowAgentAsync()
+    private async void StopButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_settings is null) return;
-
-        try
-        {
-            _ = CoreWebView2Environment.GetAvailableBrowserVersionString();
-        }
-        catch (WebView2RuntimeNotFoundException)
-        {
-            WebView2InstallButton.Visibility = Visibility.Visible;
-            throw new InvalidOperationException("未安装 Microsoft Edge WebView2 Runtime。请从 https://go.microsoft.com/fwlink/p/?LinkId=2124703 安装后重试。");
-        }
-
-        SetupPanel.Visibility = Visibility.Collapsed;
-        BrowserPanel.Visibility = Visibility.Visible;
-
-        if (!_webViewInitialized)
-        {
-            var userDataFolder = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WebScreenCapture",
-                "WebView2");
-            Directory.CreateDirectory(userDataFolder);
-            var environment = await CoreWebView2Environment.CreateAsync(userDataFolder: userDataFolder);
-            await AgentWebView.EnsureCoreWebView2Async(environment);
-            AgentWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            AgentWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            AgentWebView.CoreWebView2.Settings.IsStatusBarEnabled = false;
-            AgentWebView.CoreWebView2.Settings.IsZoomControlEnabled = false;
-            AgentWebView.CoreWebView2.Settings.AreBrowserAcceleratorKeysEnabled = false;
-            AgentWebView.CoreWebView2.ScreenCaptureStarting += (_, args) => args.Cancel = false;
-            AgentWebView.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
-            AgentWebView.NavigationCompleted += AgentWebView_NavigationCompleted;
-            _webViewInitialized = true;
-        }
-
-        var target = new Uri(new Uri(_settings.ServerUrl + "/"), "agent");
-        if (AgentWebView.Source == target) AgentWebView.Reload();
-        else AgentWebView.Source = target;
+        StopButton.IsEnabled = false;
+        await DisposeAgentAsync();
+        StopButton.Visibility = Visibility.Collapsed;
+        StartButton.Visibility = Visibility.Visible;
+        SetInputsEnabled(true);
+        ResetMetrics();
+        StopButton.IsEnabled = true;
     }
 
-    private void AgentWebView_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    private void Agent_StatusChanged(AgentRuntimeStatus status)
     {
-        if (e.IsSuccess) return;
         Dispatcher.Invoke(() =>
         {
-            SetupError.Text = $"无法打开捕获服务：{e.WebErrorStatus}。请检查服务器地址和网络。";
-            ShowSetup();
+            RuntimeState.Text = status.State;
+            RuntimeDetail.Text = status.Detail;
+            ViewerMetric.Text = status.ViewerConnected ? "观看端在线" : "观看端离线";
+            ViewerMetric.Foreground = status.ViewerConnected
+                ? (System.Windows.Media.Brush)FindResource("AccentBrush")
+                : (System.Windows.Media.Brush)FindResource("MutedBrush");
         });
     }
 
-    private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    private void Agent_CaptureStatsChanged(CaptureSnapshot snapshot)
     {
-        try
+        Dispatcher.Invoke(() =>
         {
-            using var document = JsonDocument.Parse(e.WebMessageAsJson);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("type", out var typeElement)) return;
-            var type = typeElement.GetString();
-            if (type == "ready")
-            {
-                PostBootstrap();
-            }
-            else if (type == "reauthenticate")
-            {
-                PostBootstrap();
-            }
-            else if (type == "auth-error")
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    SetupError.Text = "配对 Token 无效，请输入与网页相同的 Token。";
-                    ShowSetup();
-                });
-            }
-        }
-        catch (JsonException)
-        {
-            // Ignore messages that are not part of the host protocol.
-        }
+            FpsMetric.Text = $"{snapshot.FramesPerSecond:F0} fps";
+            BitrateMetric.Text = FormatBitrate(snapshot.BitsPerSecond);
+        });
     }
 
-    private void PostBootstrap()
+    private void ResetButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_settings is null || AgentWebView.CoreWebView2 is null) return;
-        var payload = JsonSerializer.Serialize(new { type = "bootstrap", token = _settings.PairingToken });
-        AgentWebView.CoreWebView2.PostWebMessageAsJson(payload);
-    }
-
-    private void ShowSetup()
-    {
-        BrowserPanel.Visibility = Visibility.Collapsed;
-        SetupPanel.Visibility = Visibility.Visible;
-        Activate();
-        Show();
-        WindowState = WindowState.Normal;
+        if (_agent?.IsRunning == true) return;
+        _settingsStore.Delete();
+        PairingTokenInput.Text = string.Empty;
+        SetupError.Text = string.Empty;
         PairingTokenInput.Focus();
     }
 
-    private void ResetConnectionSettings()
+    private void SetInputsEnabled(bool enabled)
     {
-        if (AgentWebView.CoreWebView2 is not null)
-        {
-            AgentWebView.CoreWebView2.CookieManager.DeleteAllCookies();
-        }
-        _settingsStore.Delete();
-        _settings = null;
-        if (_webViewInitialized) AgentWebView.Source = new Uri("about:blank");
-        PairingTokenInput.Text = string.Empty;
-        SetupError.Text = string.Empty;
-        ShowSetup();
+        ServerUrlInput.IsEnabled = enabled;
+        PairingTokenInput.IsEnabled = enabled;
+        ResetButton.IsEnabled = enabled;
     }
 
-    private void WebView2InstallButton_Click(object sender, RoutedEventArgs e)
+    private void ResetMetrics()
     {
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
-            UseShellExecute = true,
-        });
+        RuntimeState.Text = "已停止";
+        RuntimeDetail.Text = "点击开始后，程序会直接捕获整个主桌面。";
+        ViewerMetric.Text = "观看端离线";
+        ResolutionMetric.Text = "—";
+        FpsMetric.Text = "—";
+        BitrateMetric.Text = "—";
+    }
+
+    private async Task DisposeAgentAsync()
+    {
+        var agent = _agent;
+        _agent = null;
+        if (agent is null) return;
+        agent.StatusChanged -= Agent_StatusChanged;
+        agent.CaptureStatsChanged -= Agent_CaptureStatsChanged;
+        await agent.DisposeAsync();
     }
 
     private void InitializeTrayIcon()
     {
         var menu = new System.Windows.Forms.ContextMenuStrip();
         menu.Items.Add("打开", null, (_, _) => RestoreWindow());
-        menu.Items.Add("连接设置", null, (_, _) => Dispatcher.Invoke(ResetConnectionSettings));
         menu.Items.Add(new System.Windows.Forms.ToolStripSeparator());
-        menu.Items.Add("退出", null, (_, _) => Dispatcher.Invoke(ExitApplication));
+        menu.Items.Add("退出", null, ExitMenuItem_Click);
 
         var executablePath = Environment.ProcessPath;
         if (!string.IsNullOrWhiteSpace(executablePath))
@@ -234,8 +179,13 @@ public partial class MainWindow : Window
             Show();
             WindowState = WindowState.Normal;
             Activate();
+            Topmost = true;
+            Topmost = false;
+            Focus();
         });
     }
+
+    internal void RestoreFromExternalLaunch() => RestoreWindow();
 
     private void MainWindow_StateChanged(object? sender, EventArgs e)
     {
@@ -254,17 +204,36 @@ public partial class MainWindow : Window
         Hide();
         if (!_shownTrayHint && _trayIcon is not null)
         {
-            _trayIcon.ShowBalloonTip(2500, "Screen Capture", "捕获器仍在运行，可从托盘重新打开。", System.Windows.Forms.ToolTipIcon.Info);
+            _trayIcon.ShowBalloonTip(2500, "Screen Capture", "原生桌面捕获仍在运行，可从托盘重新打开。", System.Windows.Forms.ToolTipIcon.Info);
             _shownTrayHint = true;
         }
     }
 
-    private void ExitApplication()
+    private async Task ExitApplicationAsync()
     {
+        if (_exitRequested) return;
         _exitRequested = true;
-        _trayIcon?.Dispose();
-        _applicationIcon?.Dispose();
-        Close();
-        System.Windows.Application.Current.Shutdown();
+        try
+        {
+            await DisposeAgentAsync();
+        }
+        finally
+        {
+            if (_trayIcon is not null) _trayIcon.Visible = false;
+            _trayIcon?.Dispose();
+            _applicationIcon?.Dispose();
+            Close();
+            System.Windows.Application.Current.Shutdown();
+        }
+    }
+
+    private async void ExitMenuItem_Click(object? sender, EventArgs e)
+    {
+        await Dispatcher.InvokeAsync(() => ExitApplicationAsync()).Task.Unwrap();
+    }
+
+    private static string FormatBitrate(double value)
+    {
+        return value >= 1_000_000 ? $"{value / 1_000_000:F1} Mbps" : $"{value / 1000:F0} Kbps";
     }
 }

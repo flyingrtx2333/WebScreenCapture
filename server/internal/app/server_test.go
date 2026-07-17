@@ -37,6 +37,12 @@ func TestHTTPAcceptsArbitraryPairingToken(t *testing.T) {
 		t.Fatalf("embedded asset unavailable: status=%d", asset.Code)
 	}
 
+	legacyAgent := httptest.NewRecorder()
+	handler.ServeHTTP(legacyAgent, httptest.NewRequest(http.MethodGet, "/agent", nil))
+	if legacyAgent.Code != http.StatusNotFound {
+		t.Fatalf("legacy browser capture endpoint returned %d", legacyAgent.Code)
+	}
+
 	login := httptest.NewRecorder()
 	handler.ServeHTTP(login, httptest.NewRequest(http.MethodPost, "/api/viewer/session", strings.NewReader(`{"token":"anything-I-choose"}`)))
 	if login.Code != http.StatusOK {
@@ -53,6 +59,12 @@ func TestHTTPAcceptsArbitraryPairingToken(t *testing.T) {
 	handler.ServeHTTP(agent, agentRequest)
 	if agent.Code != http.StatusOK {
 		t.Fatalf("agent pairing returned %d: %s", agent.Code, agent.Body.String())
+	}
+
+	jsonAgent := httptest.NewRecorder()
+	handler.ServeHTTP(jsonAgent, httptest.NewRequest(http.MethodPost, "/api/agent/session", strings.NewReader(`{"token":"native agent room"}`)))
+	if jsonAgent.Code != http.StatusOK {
+		t.Fatalf("native JSON agent pairing returned %d: %s", jsonAgent.Code, jsonAgent.Body.String())
 	}
 
 	empty := httptest.NewRecorder()

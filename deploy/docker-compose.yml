@@ -2,7 +2,7 @@ name: webscreencapture
 
 services:
   signal:
-    image: webscreencapture-signal:1.2.1
+    image: webscreencapture-signal:2.0.0
     build:
       context: ../server
       dockerfile: Dockerfile

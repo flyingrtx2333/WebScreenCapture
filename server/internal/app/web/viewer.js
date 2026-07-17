@@ -122,7 +122,7 @@
         sessionId = message.sessionId;
         closePeer();
         setBadge('捕获端在线', 'live');
-        setEmpty('捕获端已上线', '等待捕获端选择屏幕，画面会自动出现。');
+        setEmpty('捕获端已上线', '正在启动原生整桌面捕获，画面会自动出现。');
         break;
       case 'sdp.offer':
         if (message.sessionId !== sessionId) return;
@@ -143,7 +143,7 @@
         if (message.sessionId !== sessionId) return;
         if (message.payload?.captureActive === false) {
           setBadge('捕获端在线', 'live');
-          setEmpty('捕获端已上线', '等待捕获端选择屏幕，画面会自动出现。');
+          setEmpty('捕获端已上线', '在 Windows 捕获端点击“开始捕获整个桌面”。');
         }
         break;
     }
