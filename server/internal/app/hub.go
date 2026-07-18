@@ -33,6 +33,14 @@ func (p *peer) send(message signalMessage) error {
 	return wsjsonWrite(ctx, p.conn, message)
 }
 
+func (p *peer) ping() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return p.conn.Ping(ctx)
+}
+
 func (p *peer) close(code websocket.StatusCode, reason string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -160,7 +168,7 @@ func allowedSignal(role Role, messageType string) bool {
 	}
 	if role == RoleViewer {
 		switch messageType {
-		case "sdp.answer", "ice.candidate", "peer.stop":
+		case "sdp.answer", "ice.candidate", "peer.stop", "ice.restart", "keyframe.request":
 			return true
 		}
 	}

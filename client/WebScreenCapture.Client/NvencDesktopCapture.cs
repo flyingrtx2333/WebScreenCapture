@@ -4,19 +4,35 @@ using System.Runtime.InteropServices;
 
 namespace WebScreenCapture.Client;
 
-public sealed record CaptureProfile(string Name, int FramesPerSecond, int Bitrate, int GopFrames)
+public sealed record CaptureProfile(string Name, int FramesPerSecond, int Bitrate, int GopFrames, int Tier)
 {
-    public static CaptureProfile High { get; } = new("原生桌面 / 60fps", 60, 12_000_000, 60);
+    public static CaptureProfile High { get; } = new("高清 / 60fps / 12Mbps", 60, 12_000_000, 60, 0);
+    public static CaptureProfile Medium { get; } = new("均衡 / 45fps / 7Mbps", 45, 7_000_000, 45, 1);
+    public static CaptureProfile Low { get; } = new("流畅 / 30fps / 3.5Mbps", 30, 3_500_000, 30, 2);
+
+    public static CaptureProfile NextLower(CaptureProfile profile) => profile.Tier switch
+    {
+        0 => Medium,
+        1 => Low,
+        _ => Low,
+    };
+
+    public static CaptureProfile NextHigher(CaptureProfile profile) => profile.Tier switch
+    {
+        2 => Medium,
+        1 => High,
+        _ => High,
+    };
 }
 
 public sealed record CaptureSnapshot(long Frames, long Bytes, double FramesPerSecond, double BitsPerSecond);
 
 public sealed class NvencDesktopCapture : IAsyncDisposable
 {
-    private readonly CaptureProfile _profile;
     private readonly AnnexBAccessUnitReader _reader = new();
     private readonly Stopwatch _statsClock = new();
-    private readonly TaskCompletionSource _firstFrame = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly SemaphoreSlim _lifecycleGate = new(1, 1);
+    private CaptureProfile _profile;
     private Process? _process;
     private CancellationTokenSource? _captureCts;
     private Task? _outputTask;
@@ -24,6 +40,8 @@ public sealed class NvencDesktopCapture : IAsyncDisposable
     private string _lastError = string.Empty;
     private long _frames;
     private long _bytes;
+    private CancellationToken _runToken;
+    private bool _started;
 
     public NvencDesktopCapture(CaptureProfile? profile = null)
     {
@@ -34,31 +52,67 @@ public sealed class NvencDesktopCapture : IAsyncDisposable
     public event Action<string>? Diagnostic;
 
     public bool IsRunning => _process is { HasExited: false };
+    public CaptureProfile CurrentProfile => _profile;
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
-        if (IsRunning) return;
-        ValidateNvencDriver();
-        var ffmpegPath = ResolveFfmpegPath();
-        _captureCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var startInfo = BuildStartInfo(ffmpegPath, _profile);
-        _process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动原生桌面捕获进程。");
-        _statsClock.Restart();
-        _outputTask = ReadOutputAsync(_process.StandardOutput.BaseStream, _captureCts.Token);
-        _errorTask = ReadErrorsAsync(_process.StandardError, _captureCts.Token);
+        await _lifecycleGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_started) return;
+            ValidateNvencDriver();
+            _runToken = cancellationToken;
+            _statsClock.Restart();
+            Interlocked.Exchange(ref _frames, 0);
+            Interlocked.Exchange(ref _bytes, 0);
+            _started = true;
+            try
+            {
+                await StartProcessAsync(_profile, cancellationToken);
+            }
+            catch
+            {
+                _started = false;
+                await StopProcessAsync();
+                throw;
+            }
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
+    }
 
-        var exited = _process.WaitForExitAsync(cancellationToken);
-        var completed = await Task.WhenAny(_firstFrame.Task, exited, Task.Delay(TimeSpan.FromSeconds(12), cancellationToken));
-        if (completed == _firstFrame.Task)
+    public async Task<bool> ChangeProfileAsync(CaptureProfile profile, CancellationToken cancellationToken)
+    {
+        await _lifecycleGate.WaitAsync(cancellationToken);
+        try
         {
-            await _firstFrame.Task;
-            return;
+            if (!_started || profile == _profile) return false;
+            await StopProcessAsync();
+            _profile = profile;
+            await StartProcessAsync(profile, _runToken);
+            return true;
         }
-        if (completed == exited)
+        finally
         {
-            throw new InvalidOperationException(BuildStartupError("原生桌面捕获进程提前退出。"));
+            _lifecycleGate.Release();
         }
-        throw new TimeoutException(BuildStartupError("等待 DXGI/NVENC 首帧超时。"));
+    }
+
+    public async Task RequestKeyFrameAsync(CancellationToken cancellationToken)
+    {
+        await _lifecycleGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (!_started) return;
+            await StopProcessAsync();
+            await StartProcessAsync(_profile, _runToken);
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
     }
 
     public CaptureSnapshot GetSnapshot()
@@ -71,6 +125,45 @@ public sealed class NvencDesktopCapture : IAsyncDisposable
 
     public async Task StopAsync()
     {
+        await _lifecycleGate.WaitAsync();
+        try
+        {
+            _started = false;
+            await StopProcessAsync();
+        }
+        finally
+        {
+            _lifecycleGate.Release();
+        }
+    }
+
+    private async Task StartProcessAsync(CaptureProfile profile, CancellationToken cancellationToken)
+    {
+        var firstFrame = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _lastError = string.Empty;
+        _reader.Reset();
+        _captureCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var startInfo = BuildStartInfo(ResolveFfmpegPath(), profile);
+        _process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动原生桌面捕获进程。");
+        _outputTask = ReadOutputAsync(_process.StandardOutput.BaseStream, firstFrame, _captureCts.Token);
+        _errorTask = ReadErrorsAsync(_process.StandardError, _captureCts.Token);
+
+        var exited = _process.WaitForExitAsync(cancellationToken);
+        var completed = await Task.WhenAny(firstFrame.Task, exited, Task.Delay(TimeSpan.FromSeconds(12), cancellationToken));
+        if (completed == firstFrame.Task)
+        {
+            await firstFrame.Task;
+            return;
+        }
+        if (completed == exited)
+        {
+            throw new InvalidOperationException(BuildStartupError("原生桌面捕获进程提前退出。"));
+        }
+        throw new TimeoutException(BuildStartupError("等待 DXGI/NVENC 首帧超时。"));
+    }
+
+    private async Task StopProcessAsync()
+    {
         _captureCts?.Cancel();
         if (_process is { HasExited: false } process)
         {
@@ -78,11 +171,11 @@ public sealed class NvencDesktopCapture : IAsyncDisposable
         }
         if (_outputTask is not null)
         {
-            try { await _outputTask; } catch (OperationCanceledException) { }
+            try { await _outputTask; } catch (OperationCanceledException) { } catch (IOException) { }
         }
         if (_errorTask is not null)
         {
-            try { await _errorTask; } catch (OperationCanceledException) { }
+            try { await _errorTask; } catch (OperationCanceledException) { } catch (IOException) { }
         }
         _process?.Dispose();
         _process = null;
@@ -156,17 +249,17 @@ public sealed class NvencDesktopCapture : IAsyncDisposable
         NativeLibrary.Free(handle);
     }
 
-    private async Task ReadOutputAsync(Stream stream, CancellationToken cancellationToken)
+    private async Task ReadOutputAsync(Stream stream, TaskCompletionSource firstFrame, CancellationToken cancellationToken)
     {
         var buffer = new byte[128 * 1024];
         while (!cancellationToken.IsCancellationRequested)
         {
             var count = await stream.ReadAsync(buffer, cancellationToken);
             if (count == 0) break;
-            foreach (var frame in _reader.Push(buffer.AsSpan(0, count))) PublishFrame(frame);
+            foreach (var frame in _reader.Push(buffer.AsSpan(0, count))) PublishFrame(frame, firstFrame);
         }
         var finalFrame = _reader.Flush();
-        if (finalFrame is not null) PublishFrame(finalFrame);
+        if (finalFrame is not null) PublishFrame(finalFrame, firstFrame);
     }
 
     private async Task ReadErrorsAsync(StreamReader reader, CancellationToken cancellationToken)
@@ -180,11 +273,11 @@ public sealed class NvencDesktopCapture : IAsyncDisposable
         }
     }
 
-    private void PublishFrame(byte[] frame)
+    private void PublishFrame(byte[] frame, TaskCompletionSource firstFrame)
     {
         Interlocked.Increment(ref _frames);
         Interlocked.Add(ref _bytes, frame.Length);
-        _firstFrame.TrySetResult();
+        firstFrame.TrySetResult();
         EncodedFrame?.Invoke(frame);
     }
 

@@ -16,6 +16,10 @@ func TestTURNCredentials(t *testing.T) {
 		t.Fatalf("expected 3 ICE server entries, got %d", len(servers))
 	}
 	username := servers[1].Username
+	expectedExpiry := now.Add(turnCredentialTTL).Unix()
+	if username != "1700000600:agent" || expectedExpiry != 1_700_000_600 {
+		t.Fatalf("unexpected TURN credential expiry: username=%q expiry=%d", username, expectedExpiry)
+	}
 	mac := hmac.New(sha1.New, []byte(cfg.TURNSharedSecret))
 	_, _ = mac.Write([]byte(username))
 	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))

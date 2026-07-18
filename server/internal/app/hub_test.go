@@ -13,6 +13,9 @@ func TestAllowedSignals(t *testing.T) {
 		{RoleViewer, "sdp.answer", true},
 		{RoleViewer, "sdp.offer", false},
 		{RoleViewer, "status", false},
+		{RoleViewer, "ice.restart", true},
+		{RoleViewer, "keyframe.request", true},
+		{RoleAgent, "ice.restart", false},
 	}
 	for _, tc := range cases {
 		if got := allowedSignal(tc.role, tc.typeName); got != tc.allowed {

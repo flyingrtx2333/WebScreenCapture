@@ -14,8 +14,10 @@ type ICEServer struct {
 	Credential string   `json:"credential,omitempty"`
 }
 
+const turnCredentialTTL = 10 * time.Minute
+
 func makeICEServers(cfg Config, role Role, now time.Time) []ICEServer {
-	expires := now.Add(10 * time.Minute).Unix()
+	expires := now.Add(turnCredentialTTL).Unix()
 	username := fmt.Sprintf("%d:%s", expires, role)
 	mac := hmac.New(sha1.New, []byte(cfg.TURNSharedSecret))
 	_, _ = mac.Write([]byte(username))

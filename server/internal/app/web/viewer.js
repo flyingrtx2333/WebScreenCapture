@@ -38,11 +38,16 @@
   let ws = null;
   let pc = null;
   let iceServers = [];
+  let iceExpiresAt = 0;
+  let iceRefreshTimer = null;
+  let iceRefreshPromise = null;
   let sessionId = '';
   let pendingCandidates = [];
   let statsTimer = null;
   let lastInbound = null;
   let reconnectAttempt = 0;
+  let wsOpenedAt = 0;
+  let mediaRecoveryTimer = null;
   let intentionalClose = false;
   let currentToken = sessionStorage.getItem('pairingToken') || '';
   let metricsCollapsed = readMetricsCollapsed();
@@ -119,10 +124,42 @@
 
   async function bootViewer() {
     intentionalClose = false;
-    const config = await request('/api/ice');
-    iceServers = config.iceServers;
+    await refreshIceConfiguration(false);
     el.loginLayer.classList.add('is-hidden');
     connectWebSocket();
+  }
+
+  async function refreshIceConfiguration(restartAfterRefresh) {
+    if (iceRefreshPromise) return iceRefreshPromise;
+    iceRefreshPromise = (async () => {
+      const config = await request('/api/ice');
+      iceServers = config.iceServers || [];
+      iceExpiresAt = Number(config.expiresAt || 0);
+      if (pc) {
+        const current = pc.getConfiguration();
+        pc.setConfiguration({ ...current, iceServers });
+      }
+      scheduleIceRefresh();
+      if (restartAfterRefresh && pc && sessionId) {
+        console.info('TURN credentials refreshed; requesting ICE restart');
+        sendSignal('ice.restart', { reason: 'turn-credentials-refreshed' });
+      }
+    })().finally(() => { iceRefreshPromise = null; });
+    return iceRefreshPromise;
+  }
+
+  function scheduleIceRefresh() {
+    if (iceRefreshTimer) window.clearTimeout(iceRefreshTimer);
+    if (!iceExpiresAt || intentionalClose) return;
+    const delay = Math.max(30_000, iceExpiresAt * 1000 - Date.now() - 75_000);
+    iceRefreshTimer = window.setTimeout(() => {
+      refreshIceConfiguration(true).catch(error => {
+        console.warn('TURN credential refresh failed', error);
+        iceRefreshTimer = window.setTimeout(() => {
+          refreshIceConfiguration(true).catch(retryError => console.warn('TURN credential refresh retry failed', retryError));
+        }, 30_000);
+      });
+    }, delay);
   }
 
   function connectWebSocket() {
@@ -132,6 +169,7 @@
     setBadge('正在连接', 'idle');
 
     ws.addEventListener('open', () => {
+      wsOpenedAt = Date.now();
       reconnectAttempt = 0;
       setBadge('等待捕获端', 'idle');
       setEmpty('等待被捕获端上线', '捕获端开始共享后，画面会自动出现。');
@@ -144,6 +182,8 @@
     });
 
     ws.addEventListener('close', event => {
+      console.info('Signaling closed', { code: event.code, reason: event.reason, durationMs: wsOpenedAt ? Date.now() - wsOpenedAt : 0 });
+      wsOpenedAt = 0;
       closePeer();
       if (intentionalClose) return;
       if (event.code === 1008) {
@@ -196,29 +236,73 @@
   }
 
   async function acceptOffer(offer) {
-    closePeer();
-    pc = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
-    pc.addEventListener('icecandidate', event => {
+    if (!pc || pc.connectionState === 'closed') createPeerConnection();
+    let peer = pc;
+    try {
+      await applyOffer(peer, offer);
+    } catch (error) {
+      console.warn('Recreating peer after offer failed', error);
+      closePeer();
+      createPeerConnection();
+      peer = pc;
+      await applyOffer(peer, offer);
+    }
+  }
+
+  function createPeerConnection() {
+    const peer = new RTCPeerConnection({ iceServers, bundlePolicy: 'max-bundle', rtcpMuxPolicy: 'require' });
+    pc = peer;
+    peer.addEventListener('icecandidate', event => {
+      if (pc !== peer) return;
       if (event.candidate) sendSignal('ice.candidate', event.candidate.toJSON());
     });
-    pc.addEventListener('track', event => {
+    peer.addEventListener('track', event => {
+      if (pc !== peer) return;
       el.video.srcObject = event.streams[0] || new MediaStream([event.track]);
       el.workspace.classList.add('has-video');
       el.metrics.hidden = false;
       setBadge('实时画面', 'live');
       startStats();
     });
-    pc.addEventListener('connectionstatechange', () => {
-      if (!pc) return;
-      if (pc.connectionState === 'connected') setBadge('实时画面', 'live');
-      if (pc.connectionState === 'failed') showConnectionError('媒体链路建立失败，等待重连。');
-      if (pc.connectionState === 'disconnected') setBadge('链路波动', 'error');
+    peer.addEventListener('connectionstatechange', () => {
+      if (pc !== peer) return;
+      if (peer.connectionState === 'connected') {
+        cancelMediaRecovery();
+        setBadge('实时画面', 'live');
+      }
+      if (peer.connectionState === 'failed' || peer.connectionState === 'disconnected') {
+        setBadge('链路波动', 'error');
+        scheduleMediaRecovery(peer.connectionState);
+      }
     });
-    await pc.setRemoteDescription(offer);
+  }
+
+  async function applyOffer(peer, offer) {
+    await peer.setRemoteDescription(offer);
     for (const candidate of pendingCandidates.splice(0)) await addRemoteCandidate(candidate);
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-    sendSignal('sdp.answer', pc.localDescription.toJSON());
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+    sendSignal('sdp.answer', peer.localDescription.toJSON());
+  }
+
+  function scheduleMediaRecovery(reason) {
+    if (mediaRecoveryTimer) return;
+    mediaRecoveryTimer = window.setTimeout(() => {
+      mediaRecoveryTimer = null;
+      if (!pc || !['failed', 'disconnected'].includes(pc.connectionState)) return;
+      console.warn('Media path unhealthy for 4 seconds; requesting recovery', reason);
+      setBadge('链路恢复中', 'error');
+      refreshIceConfiguration(false)
+        .catch(error => console.warn('ICE refresh during recovery failed', error))
+        .finally(() => {
+          sendSignal('ice.restart', { reason: `media-${reason}` });
+        });
+    }, 4000);
+  }
+
+  function cancelMediaRecovery() {
+    if (mediaRecoveryTimer) window.clearTimeout(mediaRecoveryTimer);
+    mediaRecoveryTimer = null;
   }
 
   function sendSignal(type, payload) {
@@ -245,6 +329,7 @@
   }
 
   function closePeer() {
+    cancelMediaRecovery();
     if (statsTimer) window.clearInterval(statsTimer);
     statsTimer = null;
     lastInbound = null;
@@ -385,6 +470,8 @@
 
   async function logoutAccount() {
     intentionalClose = true;
+    if (iceRefreshTimer) window.clearTimeout(iceRefreshTimer);
+    iceRefreshTimer = null;
     closePeer();
     if (ws) ws.close(1000, 'logout');
     try { await request('/api/session', { method: 'DELETE' }); } catch (_) {}

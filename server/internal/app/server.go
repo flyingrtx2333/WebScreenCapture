@@ -222,7 +222,11 @@ func (s *Server) ice(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "pairing token is not authorized")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"iceServers": makeICEServers(s.cfg, current.Role, time.Now())})
+	now := time.Now()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"iceServers": makeICEServers(s.cfg, current.Role, now),
+		"expiresAt":  now.Add(turnCredentialTTL).Unix(),
+	})
 }
 
 func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
@@ -242,10 +246,30 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 	}
 	conn.SetReadLimit(256 << 10)
 	p := &peer{role: current.Role, pairingKey: current.PairingKey, conn: conn}
+	connectedAt := time.Now()
+	remoteIP := clientIP(r)
+	s.logger.Info("signaling connection opened", "role", current.Role, "remote_ip", remoteIP)
 	s.hub.register(p)
+	heartbeatDone := make(chan struct{})
+	go s.websocketHeartbeat(p, heartbeatDone)
+	var readErr error
+	closeCode := websocket.StatusNormalClosure
+	closeReason := "connection closed"
 	defer func() {
+		close(heartbeatDone)
 		s.hub.unregister(p)
-		p.close(websocket.StatusNormalClosure, "connection closed")
+		if reportedCode := websocket.CloseStatus(readErr); reportedCode != -1 {
+			closeCode = reportedCode
+		}
+		p.close(closeCode, closeReason)
+		s.logger.Info("signaling connection closed",
+			"role", current.Role,
+			"remote_ip", remoteIP,
+			"close_code", int(closeCode),
+			"close_reason", closeReason,
+			"duration_ms", time.Since(connectedAt).Milliseconds(),
+			"error", readErr,
+		)
 	}()
 
 	windowStarted := time.Now()
@@ -253,6 +277,7 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 	for {
 		_, data, err := conn.Read(r.Context())
 		if err != nil {
+			readErr = err
 			return
 		}
 		if time.Since(windowStarted) >= time.Second {
@@ -261,16 +286,39 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 		}
 		messageCount++
 		if messageCount > 200 {
+			closeCode = websocket.StatusPolicyViolation
+			closeReason = "message rate exceeded"
 			p.close(websocket.StatusPolicyViolation, "message rate exceeded")
 			return
 		}
 		var message signalMessage
 		if err := json.Unmarshal(data, &message); err != nil {
+			closeCode = websocket.StatusUnsupportedData
+			closeReason = "invalid JSON"
 			p.close(websocket.StatusUnsupportedData, "invalid JSON")
 			return
 		}
 		if err := s.hub.route(p, message); err != nil {
+			closeCode = websocket.StatusPolicyViolation
+			closeReason = err.Error()
 			p.close(websocket.StatusPolicyViolation, err.Error())
+			return
+		}
+	}
+}
+
+func (s *Server) websocketHeartbeat(p *peer, done <-chan struct{}) {
+	ticker := time.NewTicker(20 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			if err := p.ping(); err != nil {
+				s.logger.Warn("signaling heartbeat failed", "role", p.role, "error", err)
+				p.close(websocket.StatusGoingAway, "heartbeat failed")
+				return
+			}
+		case <-done:
 			return
 		}
 	}

@@ -105,6 +105,25 @@ func TestAccountLoginGatesPairingAndAgent(t *testing.T) {
 		t.Fatalf("viewer pairing returned %d: %s", viewer.Code, viewer.Body.String())
 	}
 
+	iceRequest := httptest.NewRequest(http.MethodGet, "/api/ice", nil)
+	iceRequest.AddCookie(cookies[0])
+	ice := httptest.NewRecorder()
+	handler.ServeHTTP(ice, iceRequest)
+	if ice.Code != http.StatusOK {
+		t.Fatalf("ICE configuration returned %d: %s", ice.Code, ice.Body.String())
+	}
+	var iceConfiguration struct {
+		IceServers []ICEServer `json:"iceServers"`
+		ExpiresAt  int64       `json:"expiresAt"`
+	}
+	if err := json.Unmarshal(ice.Body.Bytes(), &iceConfiguration); err != nil {
+		t.Fatal(err)
+	}
+	remaining := time.Until(time.Unix(iceConfiguration.ExpiresAt, 0))
+	if len(iceConfiguration.IceServers) != 3 || remaining < 9*time.Minute || remaining > turnCredentialTTL+time.Second {
+		t.Fatalf("unexpected ICE response: servers=%d remaining=%s", len(iceConfiguration.IceServers), remaining)
+	}
+
 	agentRequest := httptest.NewRequest(http.MethodPost, "/api/agent/session", nil)
 	agentRequest.Header.Set("Authorization", "Bearer anything-I-choose")
 	agent := httptest.NewRecorder()

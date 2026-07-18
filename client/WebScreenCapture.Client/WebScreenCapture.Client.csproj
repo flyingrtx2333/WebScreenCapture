@@ -19,7 +19,7 @@
     <AllowedReferenceRelatedFileExtensions></AllowedReferenceRelatedFileExtensions>
     <AssemblyName>WebScreenCapture</AssemblyName>
     <RootNamespace>WebScreenCapture.Client</RootNamespace>
-    <Version>2.0.2</Version>
+    <Version>2.0.3</Version>
     <FFmpegExecutablePath Condition="'$(FFmpegExecutablePath)' == '' and Exists('$(MSBuildThisFileDirectory)..\native\ffmpeg.exe')">$(MSBuildThisFileDirectory)..\native\ffmpeg.exe</FFmpegExecutablePath>
     <FFmpegExecutablePath Condition="'$(FFmpegExecutablePath)' == '' and Exists('C:\ffmpeg\ffmpeg.exe')">C:\ffmpeg\ffmpeg.exe</FFmpegExecutablePath>
   </PropertyGroup>
