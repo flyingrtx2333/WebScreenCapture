@@ -9,6 +9,8 @@
     emptyMessage: document.getElementById('emptyMessage'),
     badge: document.getElementById('connectionBadge'),
     metrics: document.getElementById('metricsBand'),
+    metricsToggle: document.getElementById('metricsToggleButton'),
+    metricsToggleLabel: document.getElementById('metricsToggleLabel'),
     resolution: document.getElementById('resolutionMetric'),
     fps: document.getElementById('fpsMetric'),
     bitrate: document.getElementById('bitrateMetric'),
@@ -36,6 +38,19 @@
   let reconnectAttempt = 0;
   let intentionalClose = false;
   let currentToken = sessionStorage.getItem('pairingToken') || '';
+  let metricsCollapsed = readMetricsCollapsed();
+
+  function readMetricsCollapsed() {
+    try { return localStorage.getItem('viewerMetricsCollapsed') === '1'; } catch (_) { return false; }
+  }
+
+  function applyMetricsState() {
+    const label = metricsCollapsed ? '展开指标' : '收起指标';
+    el.metrics.classList.toggle('is-collapsed', metricsCollapsed);
+    el.metricsToggle.setAttribute('aria-expanded', String(!metricsCollapsed));
+    el.metricsToggle.title = label;
+    el.metricsToggleLabel.textContent = label;
+  }
 
   function updateCopyTokenButton() {
     el.copyToken.hidden = !currentToken;
@@ -306,6 +321,12 @@
     else document.exitFullscreen?.();
   });
 
+  el.metricsToggle.addEventListener('click', () => {
+    metricsCollapsed = !metricsCollapsed;
+    try { localStorage.setItem('viewerMetricsCollapsed', metricsCollapsed ? '1' : '0'); } catch (_) {}
+    applyMetricsState();
+  });
+
   el.logout.addEventListener('click', async () => {
     intentionalClose = true;
     closePeer();
@@ -320,6 +341,7 @@
     el.tokenInput.focus();
   });
 
+  applyMetricsState();
   updateCopyTokenButton();
   request('/api/session')
     .then(session => session.authenticated ? bootViewer() : el.tokenInput.focus())

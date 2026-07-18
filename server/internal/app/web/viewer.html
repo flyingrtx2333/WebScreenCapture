@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Screen / 实时桌面</title>
   <link rel="icon" href="/assets/favicon.png" type="image/png">
-  <link rel="stylesheet" href="/assets/styles.css">
+  <link rel="stylesheet" href="/assets/styles.css?v=2.0.4">
 </head>
 <body class="viewer-page">
   <main id="workspace" class="viewer-workspace" aria-live="polite">
@@ -35,13 +35,19 @@
     </section>
 
     <footer id="metricsBand" class="metrics-band" hidden>
-      <dl><dt>画面</dt><dd id="resolutionMetric">—</dd></dl>
-      <dl><dt>帧率</dt><dd id="fpsMetric">—</dd></dl>
-      <dl><dt>接收码率</dt><dd id="bitrateMetric">—</dd></dl>
-      <dl><dt>往返延迟</dt><dd id="rttMetric">—</dd></dl>
-      <dl><dt>丢包</dt><dd id="lossMetric">—</dd></dl>
-      <dl><dt>链路</dt><dd id="routeMetric">—</dd></dl>
-      <dl><dt>编码</dt><dd id="codecMetric">—</dd></dl>
+      <button id="metricsToggleButton" class="metrics-toggle" type="button" aria-controls="metricsGrid" aria-expanded="true" title="收起指标">
+        <span id="metricsToggleLabel">收起指标</span>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+      </button>
+      <div id="metricsGrid" class="metrics-grid">
+        <dl><dt>画面</dt><dd id="resolutionMetric">—</dd></dl>
+        <dl><dt>帧率</dt><dd id="fpsMetric">—</dd></dl>
+        <dl><dt>接收码率</dt><dd id="bitrateMetric">—</dd></dl>
+        <dl><dt>往返延迟</dt><dd id="rttMetric">—</dd></dl>
+        <dl><dt>丢包</dt><dd id="lossMetric">—</dd></dl>
+        <dl><dt>链路</dt><dd id="routeMetric">—</dd></dl>
+        <dl><dt>编码</dt><dd id="codecMetric">—</dd></dl>
+      </div>
     </footer>
   </main>
 
@@ -62,6 +68,6 @@
     </form>
   </section>
 
-  <script src="/assets/viewer.js?v=2.0.2" defer></script>
+  <script src="/assets/viewer.js?v=2.0.4" defer></script>
 </body>
 </html>
