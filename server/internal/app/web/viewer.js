@@ -19,6 +19,13 @@
     route: document.getElementById('routeMetric'),
     codec: document.getElementById('codecMetric'),
     loginLayer: document.getElementById('loginLayer'),
+    accountLoginForm: document.getElementById('accountLoginForm'),
+    accountLoginButton: document.getElementById('accountLoginButton'),
+    accountUsername: document.getElementById('accountUsername'),
+    accountPassword: document.getElementById('accountPassword'),
+    accountLoginError: document.getElementById('accountLoginError'),
+    pairingPanel: document.getElementById('pairingPanel'),
+    accountLogout: document.getElementById('accountLogoutButton'),
     loginForm: document.getElementById('loginForm'),
     loginButton: document.getElementById('loginButton'),
     tokenInput: document.getElementById('tokenInput'),
@@ -78,16 +85,40 @@
     if (!response.ok) {
       let message = `请求失败 (${response.status})`;
       try { message = (await response.json()).error || message; } catch (_) {}
-      throw new Error(message);
+      const error = new Error(message);
+      error.status = response.status;
+      throw error;
     }
     return response.status === 204 ? null : response.json();
   }
 
-  async function authenticate(token) {
+  async function authenticateAccount(username, password) {
+    await request('/api/account/session', { method: 'POST', body: JSON.stringify({ username, password }) });
+  }
+
+  async function pairViewer(token) {
     await request('/api/viewer/session', { method: 'POST', body: JSON.stringify({ token }) });
   }
 
+  function showAccountLogin(message = '') {
+    el.loginLayer.classList.remove('is-hidden');
+    el.accountLoginForm.hidden = false;
+    el.pairingPanel.hidden = true;
+    el.accountLoginError.textContent = message;
+    el.accountPassword.value = '';
+    el.accountUsername.focus();
+  }
+
+  function showPairing() {
+    el.loginLayer.classList.remove('is-hidden');
+    el.accountLoginForm.hidden = true;
+    el.pairingPanel.hidden = false;
+    el.loginError.textContent = '';
+    el.tokenInput.focus();
+  }
+
   async function bootViewer() {
+    intentionalClose = false;
     const config = await request('/api/ice');
     iceServers = config.iceServers;
     el.loginLayer.classList.add('is-hidden');
@@ -285,20 +316,45 @@
     setEmpty('画面连接异常', message);
   }
 
+  el.accountLoginForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    el.accountLoginError.textContent = '';
+    el.accountLoginButton.disabled = true;
+    try {
+      await authenticateAccount(el.accountUsername.value.trim(), el.accountPassword.value);
+      el.accountPassword.value = '';
+      showPairing();
+    } catch (error) {
+      const messages = {
+        'invalid username or password': '账号或密码错误。',
+        'username and password required': '请输入账号和密码。',
+        'too many attempts': '登录尝试过于频繁，请稍后再试。',
+        'account service unavailable': '统一账号服务暂时不可用。',
+      };
+      el.accountLoginError.textContent = messages[error.message] || error.message;
+    } finally {
+      el.accountLoginButton.disabled = false;
+    }
+  });
+
   el.loginForm.addEventListener('submit', async event => {
     event.preventDefault();
     el.loginError.textContent = '';
     el.loginButton.disabled = true;
     try {
       const token = el.tokenInput.value.trim();
-      await authenticate(token);
+      await pairViewer(token);
       currentToken = token;
       sessionStorage.setItem('pairingToken', token);
       updateCopyTokenButton();
       el.tokenInput.value = '';
       await bootViewer();
     } catch (error) {
-      el.loginError.textContent = error.message === 'pairing token required' ? '请输入配对 Token。' : error.message;
+      if (error.status === 401) {
+        showAccountLogin('登录已过期，请重新登录。');
+      } else {
+        el.loginError.textContent = error.message === 'pairing token required' ? '请输入配对 Token。' : error.message;
+      }
     } finally {
       el.loginButton.disabled = false;
     }
@@ -327,7 +383,7 @@
     applyMetricsState();
   });
 
-  el.logout.addEventListener('click', async () => {
+  async function logoutAccount() {
     intentionalClose = true;
     closePeer();
     if (ws) ws.close(1000, 'logout');
@@ -336,14 +392,20 @@
     sessionStorage.removeItem('pairingToken');
     updateCopyTokenButton();
     setBadge('等待连接', 'idle');
-    el.loginLayer.classList.remove('is-hidden');
     setEmpty('等待被捕获端上线', '登录后查看实时桌面。');
-    el.tokenInput.focus();
-  });
+    showAccountLogin();
+  }
+
+  el.accountLogout.addEventListener('click', logoutAccount);
+  el.logout.addEventListener('click', logoutAccount);
 
   applyMetricsState();
   updateCopyTokenButton();
   request('/api/session')
-    .then(session => session.authenticated ? bootViewer() : el.tokenInput.focus())
-    .catch(() => el.tokenInput.focus());
+    .then(session => {
+      if (!session.accountAuthenticated) showAccountLogin();
+      else if (session.paired && currentToken) bootViewer();
+      else showPairing();
+    })
+    .catch(() => showAccountLogin());
 })();

@@ -6,7 +6,7 @@
   <meta name="color-scheme" content="dark">
   <title>Screen / 实时桌面</title>
   <link rel="icon" href="/assets/favicon.png" type="image/png">
-  <link rel="stylesheet" href="/assets/styles.css?v=2.0.4">
+  <link rel="stylesheet" href="/assets/styles.css?v=2.0.5">
 </head>
 <body class="viewer-page">
   <main id="workspace" class="viewer-workspace" aria-live="polite">
@@ -54,20 +54,39 @@
   <section id="loginLayer" class="login-layer">
     <div class="login-copy">
       <div class="wordmark login-wordmark"><img class="wordmark-logo" src="/assets/logo-mark.png" alt=""><span>SCREEN</span></div>
-      <h1>打开你的实时桌面。</h1>
+      <h1>开始协助你需要笔试的好伙伴</h1>
     </div>
-    <form id="loginForm" class="login-form">
-      <input type="text" name="username" value="viewer" autocomplete="username" hidden>
-      <label for="tokenInput">配对 Token</label>
-      <div class="password-row">
-        <input id="tokenInput" name="token" type="text" autocomplete="off" maxlength="256" placeholder="例如：my-screen" required autofocus>
-        <button id="loginButton" type="submit">进入画面</button>
-      </div>
-      <p id="loginError" class="form-error" role="alert"></p>
-      <a class="agent-download" href="/download/WebScreenCapture.exe?v=2.0.2">下载原生 Windows 捕获端 2.0.2</a>
-    </form>
+    <div class="login-stage">
+      <form id="accountLoginForm" class="account-login-form">
+        <div class="credential-field">
+          <label for="accountUsername">账号</label>
+          <input id="accountUsername" name="username" type="text" autocomplete="username" maxlength="64" required autofocus>
+        </div>
+        <div class="credential-field">
+          <label for="accountPassword">密码</label>
+          <input id="accountPassword" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+        </div>
+        <button id="accountLoginButton" class="login-submit" type="submit">登录</button>
+        <p id="accountLoginError" class="form-error" role="alert"></p>
+      </form>
+
+      <section id="pairingPanel" class="pairing-panel" hidden>
+        <form id="loginForm">
+          <label for="tokenInput">配对 Token</label>
+          <div class="password-row">
+            <input id="tokenInput" name="token" type="text" autocomplete="off" maxlength="256" placeholder="例如：my-screen" required>
+            <button id="loginButton" type="submit">进入画面</button>
+          </div>
+          <p id="loginError" class="form-error" role="alert"></p>
+        </form>
+        <div class="pairing-footer">
+          <a class="agent-download" href="/download/WebScreenCapture.exe?v=2.0.2">下载原生 Windows 捕获端 2.0.2</a>
+          <button id="accountLogoutButton" class="account-logout" type="button">退出账号</button>
+        </div>
+      </section>
+    </div>
   </section>
 
-  <script src="/assets/viewer.js?v=2.0.4" defer></script>
+  <script src="/assets/viewer.js?v=2.0.5" defer></script>
 </body>
 </html>

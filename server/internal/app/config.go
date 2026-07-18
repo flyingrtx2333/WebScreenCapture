@@ -15,6 +15,7 @@ type Config struct {
 	Address          string
 	PublicURL        string
 	PublicHost       string
+	FlyingRTXAuthURL string
 	SessionSecret    []byte
 	TURNSharedSecret string
 	TURNHost         string
@@ -53,11 +54,17 @@ func LoadConfigFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("SECURE_COOKIES: %w", err)
 	}
+	authURL := envOr("FLYINGRTX_AUTH_URL", "http://127.0.0.1:59888/api/v1/auth/login")
+	parsedAuthURL, err := url.Parse(authURL)
+	if err != nil || parsedAuthURL.Host == "" || (parsedAuthURL.Scheme != "http" && parsedAuthURL.Scheme != "https") {
+		return Config{}, errors.New("FLYINGRTX_AUTH_URL must be an absolute HTTP(S) URL")
+	}
 
 	return Config{
 		Address:          envOr("APP_ADDR", ":8080"),
 		PublicURL:        strings.TrimRight(publicURL, "/"),
 		PublicHost:       parsedURL.Host,
+		FlyingRTXAuthURL: authURL,
 		SessionSecret:    sessionSecret,
 		TURNSharedSecret: turnSecret,
 		TURNHost:         turnHost,

@@ -23,7 +23,7 @@ chmod +x deploy.sh issue-certificate.sh renew-certificate.sh
 ./deploy.sh
 ```
 
-No access token is generated during deployment. A viewer enters any non-empty token and waits; the Windows agent enters the same token and is paired into that isolated in-memory room. Pairing tokens are not pre-registered or persisted by the server.
+The signal container joins the existing `backend_default` Docker network and delegates account verification to the FlyingRTX unified login API. Only an authenticated viewer can authorize a pairing token or download the Windows agent. The Windows agent enters that same token and is paired into the isolated in-memory room; raw pairing tokens are not persisted.
 
 Before DNS is available, `deploy.sh` creates a seven-day self-signed bootstrap certificate so nginx and coturn can start. Once DNS resolves, replace it with a trusted certificate:
 

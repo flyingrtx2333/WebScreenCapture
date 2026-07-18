@@ -2,13 +2,18 @@ name: webscreencapture
 
 services:
   signal:
-    image: webscreencapture-signal:2.0.4
+    image: webscreencapture-signal:2.0.5
     build:
       context: ../server
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
       - ./.env
+    environment:
+      FLYINGRTX_AUTH_URL: ${FLYINGRTX_AUTH_URL:-http://flyingrtx-nginx/api/v1/auth/login}
+    networks:
+      - default
+      - flyingrtx
     ports:
       - "127.0.0.1:18091:8080"
     mem_limit: 64m
@@ -61,3 +66,8 @@ services:
     volumes:
       - ./certbot-data:/etc/letsencrypt
       - ./acme-webroot:/var/www/certbot
+
+networks:
+  flyingrtx:
+    external: true
+    name: backend_default

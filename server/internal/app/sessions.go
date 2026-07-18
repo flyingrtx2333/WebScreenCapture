@@ -14,14 +14,16 @@ import (
 type Role string
 
 const (
-	RoleAgent  Role = "agent"
-	RoleViewer Role = "viewer"
-	cookieName      = "wsc_session"
+	RoleAccount Role = "account"
+	RoleAgent   Role = "agent"
+	RoleViewer  Role = "viewer"
+	cookieName       = "wsc_session"
 )
 
 type session struct {
 	Role       Role
 	PairingKey string
+	Username   string
 	ExpiresAt  time.Time
 }
 
@@ -38,18 +40,27 @@ func newSessionStore(secret []byte, secure bool) *sessionStore {
 }
 
 func (s *sessionStore) create(w http.ResponseWriter, role Role, pairingKey string) {
+	s.createSession(w, session{Role: role, PairingKey: pairingKey})
+}
+
+func (s *sessionStore) createAccount(w http.ResponseWriter, username string) {
+	s.createSession(w, session{Role: RoleAccount, Username: username})
+}
+
+func (s *sessionStore) createSession(w http.ResponseWriter, current session) {
 	idBytes := make([]byte, 32)
 	_, _ = rand.Read(idBytes)
 	id := base64.RawURLEncoding.EncodeToString(idBytes)
 	expires := time.Now().Add(s.ttl)
+	current.ExpiresAt = expires
 
 	s.mu.Lock()
 	for existingID, existing := range s.sessions {
-		if (existing.Role == role && existing.PairingKey == pairingKey) || time.Now().After(existing.ExpiresAt) {
+		if (current.Role != RoleAccount && existing.Role == current.Role && existing.PairingKey == current.PairingKey) || time.Now().After(existing.ExpiresAt) {
 			delete(s.sessions, existingID)
 		}
 	}
-	s.sessions[id] = session{Role: role, PairingKey: pairingKey, ExpiresAt: expires}
+	s.sessions[id] = current
 	s.mu.Unlock()
 
 	http.SetCookie(w, &http.Cookie{
@@ -62,6 +73,44 @@ func (s *sessionStore) create(w http.ResponseWriter, role Role, pairingKey strin
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+func (s *sessionStore) bindViewer(r *http.Request, pairingKey string) bool {
+	id, current, ok := s.current(r)
+	if !ok || current.Username == "" || (current.Role != RoleAccount && current.Role != RoleViewer) {
+		return false
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	latest, ok := s.sessions[id]
+	if !ok || latest.Username == "" || time.Now().After(latest.ExpiresAt) {
+		return false
+	}
+	latest.Role = RoleViewer
+	latest.PairingKey = pairingKey
+	s.sessions[id] = latest
+	return true
+}
+
+func (s *sessionStore) viewerAuthorized(pairingKey string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for id, current := range s.sessions {
+		if now.After(current.ExpiresAt) {
+			delete(s.sessions, id)
+			continue
+		}
+		if current.Role == RoleViewer && current.PairingKey == pairingKey && current.Username != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func isAccountSession(current session) bool {
+	return current.Username != "" && (current.Role == RoleAccount || current.Role == RoleViewer)
 }
 
 func (s *sessionStore) clear(w http.ResponseWriter, r *http.Request) {

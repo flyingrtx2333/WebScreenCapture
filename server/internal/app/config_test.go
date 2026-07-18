@@ -18,4 +18,7 @@ func TestLoadConfigWithoutPreRegisteredToken(t *testing.T) {
 	if cfg.PublicHost != "screen.example.com" {
 		t.Fatalf("unexpected decoded configuration: %#v", cfg)
 	}
+	if cfg.FlyingRTXAuthURL != "http://127.0.0.1:59888/api/v1/auth/login" {
+		t.Fatalf("unexpected default unified auth URL: %q", cfg.FlyingRTXAuthURL)
+	}
 }

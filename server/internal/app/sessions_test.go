@@ -38,3 +38,23 @@ func TestSessionRejectsForgedAndExpiredCookies(t *testing.T) {
 		t.Fatal("expired session was accepted")
 	}
 }
+
+func TestAccountSessionCanAuthorizeViewerPairing(t *testing.T) {
+	store := newSessionStore(bytes.Repeat([]byte{5}, 32), true)
+	recorder := httptest.NewRecorder()
+	store.createAccount(recorder, "flyingrtx-user")
+	cookie := recorder.Result().Cookies()[0]
+	request := httptest.NewRequest(http.MethodPost, "/api/viewer/session", nil)
+	request.AddCookie(cookie)
+
+	if store.viewerAuthorized("room-key") {
+		t.Fatal("room was authorized before the account selected it")
+	}
+	if !store.bindViewer(request, "room-key") || !store.viewerAuthorized("room-key") {
+		t.Fatal("account session did not authorize its selected pairing room")
+	}
+	_, current, ok := store.current(request)
+	if !ok || current.Role != RoleViewer || current.Username != "flyingrtx-user" {
+		t.Fatalf("unexpected bound viewer session: %#v", current)
+	}
+}

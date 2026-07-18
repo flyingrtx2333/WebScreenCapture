@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -20,12 +21,14 @@ import (
 var webFiles embed.FS
 
 type Server struct {
-	cfg      Config
-	logger   *slog.Logger
-	sessions *sessionStore
-	hub      *hub
-	limiter  *loginLimiter
-	assets   http.Handler
+	cfg            Config
+	logger         *slog.Logger
+	sessions       *sessionStore
+	hub            *hub
+	limiter        *loginLimiter
+	accountLimiter *loginLimiter
+	authClient     *http.Client
+	assets         http.Handler
 }
 
 func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
@@ -34,16 +37,20 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 		return nil, err
 	}
 	s := &Server{
-		cfg:      cfg,
-		logger:   logger,
-		sessions: newSessionStore(cfg.SessionSecret, cfg.SecureCookies),
-		hub:      newHub(),
-		limiter:  newLoginLimiter(5, time.Minute),
-		assets:   http.FileServer(http.FS(webRoot)),
+		cfg:            cfg,
+		logger:         logger,
+		sessions:       newSessionStore(cfg.SessionSecret, cfg.SecureCookies),
+		hub:            newHub(),
+		limiter:        newLoginLimiter(5, time.Minute),
+		accountLimiter: newLoginLimiter(5, time.Minute),
+		authClient:     &http.Client{Timeout: 8 * time.Second},
+		assets:         http.FileServer(http.FS(webRoot)),
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("POST /api/account/session", s.accountSession)
+	mux.HandleFunc("GET /api/account/check", s.accountCheck)
 	mux.HandleFunc("POST /api/agent/session", s.agentSession)
 	mux.HandleFunc("POST /api/viewer/session", s.viewerSession)
 	mux.HandleFunc("GET /api/session", s.sessionInfo)
@@ -54,6 +61,68 @@ func NewServer(cfg Config, logger *slog.Logger) (http.Handler, error) {
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", s.assets))
 	mux.HandleFunc("GET /", s.viewerPage)
 	return s.securityHeaders(mux), nil
+}
+
+func (s *Server) accountSession(w http.ResponseWriter, r *http.Request) {
+	remoteIP := clientIP(r)
+	if !s.accountLimiter.allow(remoteIP) {
+		writeError(w, http.StatusTooManyRequests, "too many attempts")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	input.Username = strings.TrimSpace(input.Username)
+	if input.Username == "" || len(input.Username) > 64 || input.Password == "" || len(input.Password) > 256 {
+		writeError(w, http.StatusBadRequest, "username and password required")
+		return
+	}
+
+	body, _ := json.Marshal(map[string]string{"username": input.Username, "password": input.Password})
+	request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, s.cfg.FlyingRTXAuthURL, bytes.NewReader(body))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "account service unavailable")
+		return
+	}
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("X-Real-IP", remoteIP)
+	response, err := s.authClient.Do(request)
+	if err != nil {
+		s.logger.Warn("unified account login failed", "error", err)
+		writeError(w, http.StatusBadGateway, "account service unavailable")
+		return
+	}
+	defer response.Body.Close()
+
+	switch response.StatusCode {
+	case http.StatusOK:
+		s.accountLimiter.reset(remoteIP)
+		s.sessions.createAccount(w, input.Username)
+		writeJSON(w, http.StatusOK, map[string]string{"username": input.Username})
+	case http.StatusTooManyRequests:
+		writeError(w, http.StatusTooManyRequests, "too many attempts")
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusUnprocessableEntity:
+		writeError(w, http.StatusUnauthorized, "invalid username or password")
+	default:
+		s.logger.Warn("unified account service returned an unexpected status", "status", response.StatusCode)
+		writeError(w, http.StatusBadGateway, "account service unavailable")
+	}
+}
+
+func (s *Server) accountCheck(w http.ResponseWriter, r *http.Request) {
+	_, current, ok := s.sessions.current(r)
+	if !ok || !isAccountSession(current) {
+		writeError(w, http.StatusUnauthorized, "account authentication required")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
@@ -82,14 +151,19 @@ func (s *Server) agentSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pairing token required")
 		return
 	}
+	if !s.sessions.viewerAuthorized(pairingKey) {
+		writeError(w, http.StatusForbidden, "pairing token is not authorized")
+		return
+	}
 	s.limiter.reset(clientIP(r))
 	s.sessions.create(w, RoleAgent, pairingKey)
 	writeJSON(w, http.StatusOK, map[string]string{"role": string(RoleAgent)})
 }
 
 func (s *Server) viewerSession(w http.ResponseWriter, r *http.Request) {
-	if !s.limiter.allow(clientIP(r)) {
-		writeError(w, http.StatusTooManyRequests, "too many attempts")
+	_, current, ok := s.sessions.current(r)
+	if !ok || !isAccountSession(current) {
+		writeError(w, http.StatusUnauthorized, "account authentication required")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -105,8 +179,10 @@ func (s *Server) viewerSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "pairing token required")
 		return
 	}
-	s.limiter.reset(clientIP(r))
-	s.sessions.create(w, RoleViewer, pairingKey)
+	if !s.sessions.bindViewer(r, pairingKey) {
+		writeError(w, http.StatusUnauthorized, "account authentication required")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"role": string(RoleViewer)})
 }
 
@@ -116,13 +192,19 @@ func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request) {
-	role, ok := s.sessions.role(r)
-	writeJSON(w, http.StatusOK, map[string]any{"authenticated": ok, "role": role})
+	_, current, ok := s.sessions.current(r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated":        ok,
+		"accountAuthenticated": ok && isAccountSession(current),
+		"paired":               ok && current.Role == RoleViewer && current.PairingKey != "",
+		"role":                 current.Role,
+		"username":             current.Username,
+	})
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	_, current, ok := s.sessions.current(r)
-	if !ok {
+	if !ok || (current.Role != RoleViewer && current.Role != RoleAgent) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
@@ -132,8 +214,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) ice(w http.ResponseWriter, r *http.Request) {
 	_, current, ok := s.sessions.current(r)
-	if !ok {
+	if !ok || (current.Role != RoleViewer && current.Role != RoleAgent) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if current.Role == RoleAgent && !s.sessions.viewerAuthorized(current.PairingKey) {
+		writeError(w, http.StatusForbidden, "pairing token is not authorized")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"iceServers": makeICEServers(s.cfg, current.Role, time.Now())})
@@ -141,8 +227,12 @@ func (s *Server) ice(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 	_, current, ok := s.sessions.current(r)
-	if !ok {
+	if !ok || (current.Role != RoleViewer && current.Role != RoleAgent) {
 		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if current.Role == RoleAgent && !s.sessions.viewerAuthorized(current.PairingKey) {
+		writeError(w, http.StatusForbidden, "pairing token is not authorized")
 		return
 	}
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionDisabled})
